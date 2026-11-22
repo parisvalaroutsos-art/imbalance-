@@ -132,6 +132,12 @@ def download(category: str, start, end, raw_dir: Path, policy: str, sleep: float
 
 
 # ---------------------------------------------------------------- parsers
+def _hours(day: pd.Timestamp, tz: str = TZ) -> int:
+    t0 = pd.Timestamp(day).tz_localize(tz)
+    t1 = (pd.Timestamp(day) + pd.Timedelta(days=1)).tz_localize(tz)
+    return int((t1 - t0) / pd.Timedelta(hours=1))
+
+
 def _day_index(day: pd.Timestamp, n: int, tz: str = TZ) -> pd.DatetimeIndex | None:
     """n διαστήματα ξεκινώντας από τοπικά μεσάνυχτα (σωστό και σε ημέρες 23/25 ωρών)."""
     t0 = pd.Timestamp(day).tz_localize(tz)
@@ -141,6 +147,25 @@ def _day_index(day: pd.Timestamp, n: int, tz: str = TZ) -> pd.DatetimeIndex | No
         return None
     step = pd.Timedelta(hours=1) / (n // hours)
     return pd.date_range(t0.tz_convert("UTC"), periods=n, freq=step).tz_convert(tz)
+
+
+def _wallclock_series(day: pd.Timestamp, vals, tz: str = TZ) -> pd.Series | None:
+    """Ημέρα αλλαγής ώρας με «κανονικό» πλήθος τιμών (24/48/96): αντιστοίχιση σε ώρα ρολογιού.
+
+    Άνοιξη: η ώρα που δεν υπάρχει αγνοείται. Φθινόπωρο: η επαναλαμβανόμενη ώρα παίρνει την ίδια τιμή.
+    """
+    n = len(vals)
+    if n not in (24, 48, 96):
+        return None
+    step = pd.Timedelta(hours=24) / n
+    wall = pd.date_range(pd.Timestamp(day), periods=n, freq=step)
+    loc = wall.tz_localize(tz, ambiguous=np.ones(n, dtype=bool), nonexistent="NaT")
+    s = pd.Series(np.asarray(vals, dtype=float), index=loc)
+    s = s[s.index.notna()]
+    t0 = pd.Timestamp(day).tz_localize(tz).tz_convert("UTC")
+    t1 = (pd.Timestamp(day) + pd.Timedelta(days=1)).tz_localize(tz).tz_convert("UTC")
+    grid = pd.date_range(t0, t1, freq=step, inclusive="left").tz_convert(tz)
+    return s.reindex(grid).ffill(limit=int(pd.Timedelta(hours=1) / step))
 
 
 def _is_num(v) -> bool:
@@ -156,6 +181,9 @@ def parse_forecast(path: Path, day: pd.Timestamp, tz: str = TZ) -> pd.Series | N
             idx = _day_index(day, len(vals), tz)
             if idx is not None:
                 return pd.Series(vals, index=idx)
+            ws = _wallclock_series(day, vals, tz) if _hours(day, tz) != 24 else None
+            if ws is not None:
+                return ws
     return None
 
 

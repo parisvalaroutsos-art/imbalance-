@@ -223,8 +223,8 @@ def fetch_enex(start, end, out_csv="data/prices.csv", raw_dir="data/raw/enex", s
     # ωριαίες τιμές (πριν το 15λεπτο) -> 15λεπτα
     grid = pd.date_range(df.index.min().tz_convert("UTC"), df.index.max().tz_convert("UTC") + pd.Timedelta(minutes=45),
                          freq="15min").tz_convert(tz)
-    df = df.reindex(df.index.union(grid)).sort_index()
-    df = df.groupby(df.index.floor("h")).transform(lambda s: s.ffill()).reindex(grid)
+    df = df.reindex(df.index.union(grid)).sort_index().tz_convert("UTC")  # UTC: χωρίς ασάφεια αλλαγής ώρας
+    df = df.groupby(df.index.floor("h")).transform(lambda s: s.ffill()).tz_convert(tz).reindex(grid)
     df.index.name = "timestamp"
     print(f"[ΕΧΕ] {len(best)} ημερήσια αρχεία, {bad} χωρίς ανάγνωση | "
           + ", ".join(f"{c}: {df[c].notna().sum() // 96} ημ." for c in df.columns))

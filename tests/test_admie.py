@@ -50,3 +50,12 @@ def test_select_versions_pre_dam():
     ]
     assert select_versions(items, "pre_dam")[0]["version"] == 1
     assert select_versions(items, "latest")[0]["version"] == 2
+
+
+def test_forecast_dst_days_wallclock():
+    """Ο ΑΔΜΗΕ δίνει 96 (ή 48) τιμές και στις ημέρες αλλαγής ώρας -> αντιστοίχιση σε ώρα ρολογιού."""
+    autumn = parse_forecast(FX / "20251026_ISP1DayAheadLoadForecast_01.xlsx", pd.Timestamp("2025-10-26"))
+    assert len(autumn) == 100 and autumn.notna().all()
+    spring = parse_forecast(FX / "20250330_ISP1DayAheadLoadForecast_01.xlsx", pd.Timestamp("2025-03-30"))
+    assert len(spring) == 46 and spring.notna().all()
+    assert not ((spring.index.hour == 3) & (spring.index.day == 30)).any()
