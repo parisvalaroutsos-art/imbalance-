@@ -90,7 +90,21 @@ python -m imbalance_forecast admie --start 2024-01-01 --out data/admie.csv
   γιατί δεν είναι γνωστά για την ημέρα-στόχο πριν τη DAM.
 * `python -m imbalance_forecast admie-types` δείχνει όλες τις κατηγορίες και
   `admie-list --category X --date D` τα αρχεία μιας ημέρας.
-* Η DAM **δεν** δίνεται από τον ΑΔΜΗΕ (είναι από το ΕΧΕ/HEnEx), οπότε τη δίνετε σε δικό σας CSV (`prices.csv`).
+* Η DAM δεν δίνεται από τον ΑΔΜΗΕ. Κατεβαίνει από το ΕΧΕ (βλ. παρακάτω).
+
+## Αυτόματο κατέβασμα τιμών DAM / IDA από το ΕΧΕ (HEnEx)
+
+```bash
+python -m imbalance_forecast enex --start 2024-01-01 --out data/prices.csv
+```
+
+* **Ετήσια αρχεία** (`/web/guest/dam-idm-archive`): ένα zip ανά έτος με ημερήσια `ResultsSummary`
+  για DAM και IDA1–3 (για τα παλιότερα έτη CRIDA1–3, που αντιστοιχίζονται σε `ida1–3`).
+* **Τρέχον έτος**: σελίδες δημοσιεύσεων DAM και Intraday, με σελιδοποίηση και τα νεότερα πρώτα.
+* Ανάλυση: ωριαία έως τις 30/9/2025 (επαναλαμβάνεται στα 4 τέταρτα), 15λεπτη από 1/10/2025.
+  Οι ημέρες αλλαγής ώρας χειρίζονται σωστά. Η IDA3 καλύπτει μόνο 12:00–24:00.
+* Αν υπάρχουν διορθωμένες εκδόσεις (v02 κ.λπ.), κρατιέται η τελευταία.
+* Έξοδος `data/prices.csv`: `timestamp, dam, ida1, ida2, ida3`.
 
 ## Μορφή δεδομένων
 
@@ -116,6 +130,7 @@ pip install -r requirements.txt
 python -m imbalance_forecast demo                     # συνθετικά (ψεύτικα) δεδομένα
 
 python -m imbalance_forecast admie --start 2024-01-01 --out data/admie.csv
+python -m imbalance_forecast enex  --start 2024-01-01 --out data/prices.csv
 
 python -m imbalance_forecast backtest --data data/prices.csv data/admie.csv \
     --start 2025-10-01 --out backtest.csv
@@ -142,6 +157,7 @@ imbalance_forecast/
   config.py        ρυθμίσεις (χρονισμός, IDA, ευστάθεια, μοντέλο)
   availability.py  κανόνας «Πέμπτη -> προηγούμενη Δευ–Κυρ»
   admie.py         κατέβασμα/ανάγνωση αρχείων ΑΔΜΗΕ
+  enex.py          κατέβασμα/ανάγνωση τιμών DAM/IDA από το ΕΧΕ
   data.py          φόρτωση CSV, ζώνες ώρας, πλέγμα 15'
   features.py      features χωρίς διαρροή (as-of cutoffs)
   model.py         μοντέλο ευστάθειας + quantile GBM + ταξινομητής κατεύθυνσης

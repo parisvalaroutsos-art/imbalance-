@@ -2,6 +2,7 @@
 
     python -m imbalance_forecast demo
     python -m imbalance_forecast admie --start 2024-01-01 --out data/admie.csv
+    python -m imbalance_forecast enex  --start 2024-01-01 --out data/prices.csv
     python -m imbalance_forecast backtest --data data/prices.csv data/admie.csv --start 2025-10-01
     python -m imbalance_forecast predict  --data data/prices.csv data/admie.csv --date 2026-11-23
 """
@@ -86,6 +87,13 @@ def main(argv=None):
     g.add_argument("--sleep", type=float, default=1.0, help="παύση (s) ανάμεσα στα αιτήματα")
     g.add_argument("--dam-gate", default="12:00", help="ώρα (τοπική, D-1) πριν την οποία πρέπει να έχει βγει η πρόβλεψη")
 
+    ge = sub.add_parser("enex", help="κατέβασμα τιμών DAM/IDA από το ΕΧΕ (HEnEx) σε CSV")
+    ge.add_argument("--start", required=True)
+    ge.add_argument("--end", default=str((pd.Timestamp.today().normalize() + pd.Timedelta(days=1)).date()))
+    ge.add_argument("--out", default="data/prices.csv")
+    ge.add_argument("--raw-dir", default="data/raw/enex")
+    ge.add_argument("--sleep", type=float, default=1.0, help="παύση (s) ανάμεσα στα αιτήματα")
+
     gl = sub.add_parser("admie-list", help="τι αρχεία επιστρέφει το API ΑΔΜΗΕ για μια κατηγορία")
     gl.add_argument("--category", required=True)
     gl.add_argument("--date", required=True)
@@ -98,6 +106,11 @@ def main(argv=None):
         from .admie import fetch_admie
 
         fetch_admie(a.start, a.end, a.out, a.raw_dir, only=a.only, sleep=a.sleep, dam_gate=a.dam_gate)
+        return
+    if a.cmd == "enex":
+        from .enex import fetch_enex
+
+        fetch_enex(a.start, a.end, a.out, a.raw_dir, sleep=a.sleep)
         return
     if a.cmd == "admie-list":
         from .admie import list_files

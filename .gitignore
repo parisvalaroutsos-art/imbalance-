@@ -5,3 +5,6 @@ backtest*.csv
 forecast*.csv
 data/*
 !data/.gitkeep
+!data/prices.csv
+!data/admie.csv
+!data/admie_extra.csv
