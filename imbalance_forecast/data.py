@@ -62,12 +62,16 @@ def align(df: pd.DataFrame, cfg: Config) -> pd.DataFrame:
     return out
 
 
-def last_known_imbalance_date(df: pd.DataFrame, cfg: Config) -> pd.Timestamp | None:
-    """Τελευταία ημερομηνία (τοπική) με πλήρη ημέρα imbalance."""
-    s = df[cfg.col_imb].dropna() if cfg.col_imb in df else pd.Series(dtype=float)
+def last_known_date(df: pd.DataFrame, col: str, cfg: Config) -> pd.Timestamp | None:
+    """Τελευταία ημερομηνία (τοπική) με πλήρη ημέρα τιμών στη στήλη col."""
+    s = df[col].dropna() if col in df else pd.Series(dtype=float)
     if s.empty:
         return None
-    dates = s.index.tz_localize(None).normalize() if s.index.tz is None else s.index.tz_convert(cfg.tz).tz_localize(None).normalize()
+    dates = s.index.tz_convert(cfg.tz).tz_localize(None).normalize()
     counts = pd.Series(1, index=dates).groupby(level=0).sum()
     full = counts[counts >= counts.max() * 0.9]
     return full.index.max()
+
+
+def last_known_imbalance_date(df: pd.DataFrame, cfg: Config) -> pd.Timestamp | None:
+    return last_known_date(df, cfg.col_imb, cfg)

@@ -6,25 +6,33 @@ import pandas as pd
 
 from .availability import published_through
 from .config import Config
-from .data import last_known_imbalance_date
-from .features import TARGET, build_features
+from .data import last_known_date
+from .features import STAB_FLAG, STAB_PROB, TARGET, build_features
 from .model import ImbalanceModel
 
 
 def _train_slice(frame: pd.DataFrame, cfg: Config, cutoff: pd.Timestamp) -> pd.DataFrame:
-    """Γραμμές εκπαίδευσης: μόνο ημέρες με imbalance γνωστό έως το cutoff."""
+    """Γραμμές εκπαίδευσης κύριου μοντέλου: μόνο ημέρες με imbalance γνωστό έως το cutoff."""
     start = cutoff - pd.Timedelta(days=cfg.train_window_days - 1)
     m = (frame["date"] <= cutoff) & (frame["date"] >= start) & frame[TARGET].notna()
     return frame[m]
 
 
-def backtest(df: pd.DataFrame, cfg: Config, start, end=None, verbose: bool = True) -> pd.DataFrame:
-    """Επαναλαμβανόμενη εκπαίδευση κάθε εβδομάδα (με κάθε νέα δημοσίευση imbalance).
+def _stab_slice(frame: pd.DataFrame, cfg: Config, stab_cutoff: pd.Timestamp) -> pd.DataFrame | None:
+    """Γραμμές εκπαίδευσης μοντέλου ευστάθειας: ιστορικό ευστάθειας έως stab_cutoff (πιο πρόσφατο)."""
+    if STAB_FLAG not in frame:
+        return None
+    start = stab_cutoff - pd.Timedelta(days=cfg.train_window_days - 1)
+    m = (frame["date"] <= stab_cutoff) & (frame["date"] >= start) & frame[STAB_FLAG].notna()
+    return frame[m]
 
-    Κάθε ημέρα-στόχος D προβλέπεται από μοντέλο εκπαιδευμένο μόνο με ό,τι ήταν
-    διαθέσιμο την ημέρα έκδοσης D - issue_lead_days.
+
+def backtest(df: pd.DataFrame, cfg: Config, start, end=None, verbose: bool = True) -> pd.DataFrame:
+    """Walk-forward: επανεκπαίδευση με κάθε νέα εβδομαδιαία δημοσίευση imbalance
+    (ή κάθε retrain_every_weeks). Κάθε ημέρα D προβλέπεται μόνο με ό,τι ήταν διαθέσιμο
+    την ημέρα έκδοσης D - issue_lead_days.
     """
-    frame, feats = build_features(df, cfg)
+    frame, feats, stab_feats = build_features(df, cfg)
     start = pd.Timestamp(start).normalize()
     end = pd.Timestamp(end).normalize() if end is not None else frame["date"].max()
     test = frame[(frame["date"] >= start) & (frame["date"] <= end)]
@@ -36,10 +44,12 @@ def backtest(df: pd.DataFrame, cfg: Config, start, end=None, verbose: bool = Tru
             train = _train_slice(frame, cfg, cutoff)
             if train["date"].nunique() < cfg.min_train_days:
                 continue
-            model, trained_at = ImbalanceModel(cfg, feats).fit(train), cutoff
+            stab_train = _stab_slice(frame, cfg, grp["stab_cutoff"].min())
+            model = ImbalanceModel(cfg, feats, stab_feats).fit(train, stab_train)
+            trained_at = cutoff
         pred = model.predict(grp)
-        res = grp[["date", "cutoff", "dam", "imbalance", "spread"]].join(pred)
-        res = res.join(baselines(grp))
+        keep = ["date", "cutoff", "dam", "imbalance", "spread"] + ([STAB_FLAG] if STAB_FLAG in grp else [])
+        res = grp[keep].join(pred).join(baselines(grp))
         results.append(res)
         if verbose:
             d0, d1 = grp["date"].min().date(), grp["date"].max().date()
@@ -94,10 +104,37 @@ def metrics(res: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def forecast(df: pd.DataFrame, cfg: Config, target_date, issue_date=None) -> pd.DataFrame:
-    """Πρόβλεψη για την ημέρα target_date (τοπική) με ό,τι είναι γνωστό σήμερα.
+def stability_report(res: pd.DataFrame) -> pd.DataFrame | None:
+    """Έλεγχος της υπόθεσης «ευστάθεια -> πέφτει το imbalance».
 
-    Ο περιορισμός διαθεσιμότητας = min(κανόνας Πέμπτης, τελευταία πλήρης ημέρα στα δεδομένα).
+    Ανά κλάση προβλεπόμενης πιθανότητας ευστάθειας: πόσο συχνά έγινε πράγματι ευστάθεια,
+    μέσο πραγματικό spread και πόσο συχνά imbalance < DAM.
+    """
+    if STAB_PROB not in res or res[STAB_PROB].isna().all():
+        return None
+    r = res.dropna(subset=["spread", STAB_PROB])
+    bins = pd.cut(r[STAB_PROB], [0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0], include_lowest=True)
+    g = r.groupby(bins, observed=True)
+    out = pd.DataFrame(
+        {
+            "n_15min": g.size(),
+            "stab_actual": g[STAB_FLAG].mean() if STAB_FLAG in r else np.nan,
+            "spread_mean": g["spread"].mean(),
+            "spread_q50_pred": g["spread_q50"].mean(),
+            "P(imb<dam)_actual": g["spread"].apply(lambda s: (s < 0).mean()),
+            "P(imb<dam)_pred": g["p_imb_lt_dam"].mean(),
+        }
+    )
+    out.index.name = "stab_prob"
+    return out
+
+
+def forecast(df: pd.DataFrame, cfg: Config, target_date, issue_date=None) -> pd.DataFrame:
+    """Πρόβλεψη για την ημέρα target_date (τοπική) με ό,τι είναι γνωστό στο issue.
+
+    imbalance γνωστό έως  min(κανόνας Πέμπτης, τελευταία πλήρης ημέρα στα δεδομένα)
+    ευστάθεια γνωστή έως  min(issue - stab_lag_days, τελευταία πλήρης ημέρα στα δεδομένα)
+    Η DAM της ημέρας-στόχου διαβάζεται από τη στήλη dam (πραγματική ή δική σας εκτίμηση).
     """
     target_date = pd.Timestamp(target_date).normalize()
     issue_date = (
@@ -107,18 +144,27 @@ def forecast(df: pd.DataFrame, cfg: Config, target_date, issue_date=None) -> pd.
     )
     lead = (target_date - issue_date).days
     cfg_run = Config(**{**cfg.__dict__, "issue_lead_days": lead})
-    kt = last_known_imbalance_date(df, cfg_run)
+    kt = last_known_date(df, cfg.col_imb, cfg_run)
     rule = published_through(issue_date, cfg.pub_weekday, cfg.pub_available_same_day)
     cutoff = min(rule, kt) if kt is not None else rule
+    skt = last_known_date(df, cfg.col_stab, cfg_run)
+    stab_rule = issue_date - pd.Timedelta(days=cfg.stab_lag_days)
+    stab_cutoff = min(stab_rule, skt) if skt is not None else stab_rule
 
-    frame, feats = build_features(df, cfg_run, known_through=kt)
+    frame, feats, stab_feats = build_features(df, cfg_run, known_through=kt, stab_known_through=skt)
     train = _train_slice(frame, cfg_run, cutoff)
     if train["date"].nunique() < cfg.min_train_days:
         raise ValueError(f"Λίγα δεδομένα εκπαίδευσης ({train['date'].nunique()} ημέρες έως {cutoff.date()}).")
     tgt = frame[frame["date"] == target_date]
     if tgt.empty:
         raise ValueError(f"Δεν υπάρχουν γραμμές (DAM/ΑΠΕ/φορτίο) για {target_date.date()}.")
-    model = ImbalanceModel(cfg_run, feats).fit(train)
+    if tgt["dam"].isna().all():
+        print("ΠΡΟΣΟΧΗ: δεν υπάρχει τιμή DAM για την ημέρα-στόχο -> imb_* = NaN (δώστε εκτίμηση στη στήλη dam).")
+    model = ImbalanceModel(cfg_run, feats, stab_feats).fit(train, _stab_slice(frame, cfg_run, stab_cutoff))
     out = tgt[["dam"]].join(model.predict(tgt))
-    out.attrs.update(issue_date=str(issue_date.date()), imbalance_known_through=str(cutoff.date()))
+    out.attrs.update(
+        issue_date=str(issue_date.date()),
+        imbalance_known_through=str(cutoff.date()),
+        stability_known_through=str(stab_cutoff.date()),
+    )
     return out

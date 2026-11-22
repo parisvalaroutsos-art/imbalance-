@@ -15,8 +15,10 @@ class Config:
     # (π.χ. 1 = D-1, μετά το DAM και το IDA1).
     issue_lead_days: int = 1
     # Ποιες IDA δημοπρασίες είναι γνωστές τη στιγμή της πρόβλεψης.
+    # Προεπιλογή: πρόβλεψη ΠΡΙΝ τη DAM -> καμία IDA. Η τιμή DAM της D θεωρείται γνωστή
+    # (δική σας εκτίμηση ή πραγματική) και δίνεται στη στήλη `dam`.
     # Ελλάδα (CRIDA): IDA1 D-1 απόγευμα, IDA2 D-1 βράδυ, IDA3 ημέρα D (μόνο μέρος της ημέρας).
-    ida_available: tuple[str, ...] = ("ida1",)
+    ida_available: tuple[str, ...] = ()
 
     # --- Καθυστέρηση δημοσίευσης imbalance ---
     # Τα imbalance δημοσιεύονται Πέμπτη (weekday=3) για την προηγούμενη Δευτέρα-Κυριακή.
@@ -51,3 +53,12 @@ class Config:
     col_res: str = "res_forecast"
     col_load: str = "load_forecast"
     ida_cols: tuple[str, ...] = ("ida1", "ida2", "ida3")
+
+    # --- Ευστάθεια (εντολές ΑΔΜΗΕ σε μονάδες αερίου + περικοπή ΑΠΕ για εφεδρεία/ευστάθεια) ---
+    # Στήλη με το ιστορικό: MW περικοπής ΑΠΕ (ή 0/1) ανά 15λεπτο. Για την ημέρα-στόχο ΔΕΝ είναι
+    # γνωστή πριν τη DAM, οπότε προβλέπεται από ξεχωριστό μοντέλο (stab_prob).
+    col_stab: str = "stability"
+    stab_threshold: float = 0.0  # γεγονός ευστάθειας όταν stability > threshold
+    # Το ιστορικό ευστάθειας (από ISP/ΑΔΜΗΕ) είναι γνωστό έως issue_date - stab_lag_days.
+    stab_lag_days: int = 1
+    stab_cv_folds: int = 4  # cross-fitting για out-of-fold stab_prob στην εκπαίδευση

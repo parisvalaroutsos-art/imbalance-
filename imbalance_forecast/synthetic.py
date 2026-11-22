@@ -54,12 +54,20 @@ def make_synthetic(start="2024-01-01", end="2026-11-22", seed: int = 7, tz: str 
     # Αργά μεταβαλλόμενη μεροληψία του συστήματος (ανά εβδομάδα) -> αξία των ιστορικών lags
     week_bias = np.repeat(rng.normal(0, 12, n // (96 * 7) + 2), 96 * 7)[:n]
     week_bias = pd.Series(week_bias).rolling(96 * 14, min_periods=1).mean().values
-    stability = rng.normal(0, 1, n)  # π.χ. δείκτης ευστάθειας/επάρκειας γνωστός D-1
+    # Ευστάθεια: όταν το καθαρό φορτίο είναι χαμηλό / μερίδιο ΑΠΕ υψηλό, ο ΑΔΜΗΕ βάζει μονάδες
+    # αερίου για εφεδρεία και περικόπτει ΑΠΕ -> το σύστημα είναι «μακρύ» -> πέφτει το imbalance.
+    share = res_fc / load_fc
+    day_risk = pd.Series(share).groupby(day_id).transform("max").values
+    logit = -9 + 7 * share + 4 * day_risk + 0.8 * rng.normal(0, 1, day_id.max() + 1)[day_id]
+    stab_event = rng.random(n) < 1 / (1 + np.exp(-logit))
+    # τα γεγονότα διαρκούν ώρες: εξομάλυνση ανά ώρα
+    stab_event = pd.Series(stab_event.astype(float)).rolling(8, center=True, min_periods=1).mean().values > 0.5
+    stability = np.where(stab_event, rng.uniform(200, 1200, n), 0.0)  # MW περικοπής ΑΠΕ
     spread = (
         0.06 * sys_short
         + week_bias
-        + 6 * stability
-        + 10 * (solar > 2500) * -1
+        - 45 * stab_event
+        - 0.03 * stability
         + rng.standard_t(3, n) * 15
     )
     spikes = rng.random(n) < 0.003

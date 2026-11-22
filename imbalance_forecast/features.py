@@ -1,11 +1,12 @@
 """Κατασκευή features χωρίς διαρροή πληροφορίας (as-of).
 
 Για κάθε 15λεπτο της ημέρας D:
-  * issue_date = D - issue_lead_days
-  * cutoff     = τελευταία ημέρα με δημοσιευμένο imbalance τη στιγμή του issue
-                 (κανόνας Πέμπτης, βλ. availability.py)
-  * Features από ADMIE (ΑΠΕ, φορτίο, extra), DAM, διαθέσιμες IDA -> γνωστά στο issue.
-  * Ιστορικά features imbalance/spread υπολογίζονται ΜΟΝΟ με δεδομένα <= cutoff.
+  * issue_date  = D - issue_lead_days  (προεπιλογή: D-1, ΠΡΙΝ τη DAM)
+  * cutoff      = τελευταία ημέρα με δημοσιευμένο imbalance (κανόνας Πέμπτης)
+  * stab_cutoff = τελευταία ημέρα με γνωστό ιστορικό ευστάθειας (issue - stab_lag_days)
+  * Γνωστά στο issue: πρόβλεψη ΑΔΜΗΕ (ΑΠΕ/φορτίο), DAM (θεωρείται γνωστή), διαθέσιμες IDA.
+  * Η ευστάθεια της D ΔΕΝ είναι γνωστή -> προβλέπεται (stab_prob, βλ. model.py) από τα
+    «φυσικά» της αίτια (υψηλό μερίδιο ΑΠΕ, χαμηλό καθαρό φορτίο) και το πρόσφατο ιστορικό της.
 """
 from __future__ import annotations
 
@@ -17,6 +18,8 @@ from .config import Config
 
 SPREAD = "spread"
 TARGET = "y"
+STAB_FLAG = "stab_flag"
+STAB_PROB = "stab_prob"
 
 
 # ---------------------------------------------------------------- αργίες
@@ -40,14 +43,9 @@ def greek_holidays(years) -> set[pd.Timestamp]:
     return out
 
 
-# ---------------------------------------------------------------- βοηθητικά
-def _within_day_diff(s: pd.Series, date: pd.Series, periods: int) -> pd.Series:
-    return s.groupby(date.values).diff(periods)
-
-
+# ---------------------------------------------------------------- exog (γνωστά στο issue)
 def _add_exog(f: pd.DataFrame, df: pd.DataFrame, cfg: Config) -> list[str]:
     cols = []
-    date = f["date"]
     res = df.get(cfg.col_res)
     load = df.get(cfg.col_load)
     dam = df.get(cfg.col_dam)
@@ -63,20 +61,27 @@ def _add_exog(f: pd.DataFrame, df: pd.DataFrame, cfg: Config) -> list[str]:
     if dam is not None:
         base["dam"] = dam
 
+    g = f.groupby("date")
     for name, s in base.items():
         f[name] = s.values
-        f[f"{name}_dmean"] = f.groupby("date")[name].transform("mean")
+        f[f"{name}_dmean"] = g[name].transform("mean")
         f[f"{name}_dev"] = f[name] - f[f"{name}_dmean"]
-        f[f"{name}_ramp1h"] = _within_day_diff(f[name], date, 4)
+        f[f"{name}_ramp1h"] = f.groupby("date")[name].diff(4)
         cols += [name, f"{name}_dmean", f"{name}_dev", f"{name}_ramp1h"]
+    g = f.groupby("date")
     if "dam" in f:
-        f["dam_dmax"] = f.groupby("date")["dam"].transform("max")
-        f["dam_dmin"] = f.groupby("date")["dam"].transform("min")
+        f["dam_dmax"] = g["dam"].transform("max")
+        f["dam_dmin"] = g["dam"].transform("min")
         cols += ["dam_dmax", "dam_dmin"]
+    # οδηγοί ευστάθειας: πόσο «στριμωγμένο» είναι το σύστημα σε θερμικές μονάδες
+    if "resid_load" in f:
+        f["resid_load_dmin"] = g["resid_load"].transform("min")
+        f["res_share_dmax"] = g["res_share"].transform("max")
+        f["hrs_res_share_gt70"] = g["res_share"].transform(lambda s: (s > 0.7).sum() / 4)
+        cols += ["resid_load_dmin", "res_share_dmax", "hrs_res_share_gt70"]
 
-    # IDA: μόνο όσες είναι διαθέσιμες στο issue. Το (IDA - DAM) δείχνει προς τα πού
-    # κινήθηκαν οι θέσεις των συμμετεχόντων μετά το DAM -> ισχυρό σήμα για την κατεύθυνση.
-    ida_last = None  # η πιο πρόσφατη διαθέσιμη IDA τιμή ανά 15λεπτο
+    # IDA: μόνο όσες είναι διαθέσιμες στο issue
+    ida_last = None
     for c in cfg.ida_cols:
         if c in cfg.ida_available and c in df:
             f[c] = df[c].values
@@ -90,8 +95,8 @@ def _add_exog(f: pd.DataFrame, df: pd.DataFrame, cfg: Config) -> list[str]:
         f["ida_last_m_dam"] = f["ida_last"] - f["dam"]
         cols += ["ida_last", "ida_last_m_dam"]
 
-    # επιπλέον στήλες χρήστη (π.χ. ευστάθεια/επάρκεια, εφεδρείες, διασυνδέσεις)
-    known = {cfg.col_dam, cfg.col_imb, cfg.col_res, cfg.col_load, *cfg.ida_cols}
+    # επιπλέον στήλες χρήστη (πρέπει να είναι γνωστές στο issue, π.χ. προβλέψεις)
+    known = {cfg.col_dam, cfg.col_imb, cfg.col_res, cfg.col_load, cfg.col_stab, *cfg.ida_cols}
     for c in df.columns:
         if c not in known:
             f[f"x_{c}"] = df[c].values
@@ -99,66 +104,108 @@ def _add_exog(f: pd.DataFrame, df: pd.DataFrame, cfg: Config) -> list[str]:
     return cols
 
 
-def _lag_tables(df: pd.DataFrame, cfg: Config, cutoffs: pd.DatetimeIndex):
-    """Στατιστικά imbalance/spread ανά (cutoff, ώρα) και (cutoff, ημέρα εβδ., ώρα)."""
-    if cfg.col_imb not in df or cfg.col_dam not in df:
-        return None, None
-    loc = df.index.tz_convert(cfg.tz)
-    h = pd.DataFrame(
-        {
-            "date": loc.tz_localize(None).normalize(),
-            "hour": loc.hour,
-            "spr": (df[cfg.col_imb] - df[cfg.col_dam]).values,
-            "imb": df[cfg.col_imb].values,
-        }
-    )
-    spr = h.pivot_table(index="date", columns="hour", values="spr", aggfunc="mean")
-    imb = h.pivot_table(index="date", columns="hour", values="imb", aggfunc="mean")
-    if spr.empty:
-        return None, None
-    all_days = pd.date_range(spr.index.min(), spr.index.max(), freq="D")
-    spr, imb = spr.reindex(all_days), imb.reindex(all_days)
-    hours = spr.columns
+# ---------------------------------------------------------------- lags
+def _hourly_pivot(f: pd.DataFrame, col: str) -> pd.DataFrame:
+    p = f.pivot_table(index="date", columns="hour", values=col, aggfunc="mean")
+    return p.reindex(pd.date_range(p.index.min(), p.index.max(), freq="D"))
 
-    rows_h, rows_dh = [], []
-    for c in cutoffs.unique():
-        w7 = spr.loc[c - pd.Timedelta(days=6): c]
-        w28 = spr.loc[c - pd.Timedelta(days=27): c]
-        if w28.dropna(how="all").empty:
-            continue
-        last = spr.loc[c] if c in spr.index else pd.Series(np.nan, index=hours)
-        t = pd.DataFrame(
+
+def _stack(tables: dict[str, pd.DataFrame], key: str) -> pd.DataFrame:
+    """{name: date x hour} -> long frame (key, hour, name...)."""
+    parts = []
+    for name, t in tables.items():
+        s = t.stack(future_stack=True)
+        s.name = name
+        parts.append(s)
+    out = pd.concat(parts, axis=1)
+    out.index.names = [key, "hour"]
+    return out.reset_index()
+
+
+def _imbalance_lags(f: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, list[str]] | None:
+    """Στατιστικά spread/imbalance έως κάθε ημερομηνία c (περιλαμβάνεται), ανά ώρα."""
+    if f[SPREAD].notna().sum() == 0:
+        return None
+    spr = _hourly_pivot(f, SPREAD)
+    imb = _hourly_pivot(f, "imbalance")
+    pos = (spr > 0).where(spr.notna())
+    r7, r28 = spr.rolling(7, min_periods=1), spr.rolling(28, min_periods=3)
+    tabs = {
+        "spr_h_last": spr,
+        "spr_h_m7": r7.mean(),
+        "spr_h_m28": r28.mean(),
+        "spr_h_med28": r28.median(),
+        "spr_h_sd28": r28.std(),
+        "spr_h_pos7": pos.rolling(7, min_periods=1).mean(),
+        "spr_h_pos28": pos.rolling(28, min_periods=3).mean(),
+        "imb_h_m7": imb.rolling(7, min_periods=1).mean(),
+    }
+    lag_h = _stack(tabs, "cutoff")
+
+    # ημερήσια (scalar ανά cutoff)
+    d = f.groupby("date")[SPREAD].agg(["sum", "count"]).reindex(spr.index)
+    d2 = (f[SPREAD] ** 2).groupby(f["date"]).sum().reindex(spr.index)
+    s7, n7, q7 = d["sum"].rolling(7, 1).sum(), d["count"].rolling(7, 1).sum(), d2.rolling(7, 1).sum()
+    s28, n28 = d["sum"].rolling(28, 1).sum(), d["count"].rolling(28, 1).sum()
+    daily = pd.DataFrame({"spr_m7": s7 / n7, "spr_sd7": np.sqrt((q7 / n7 - (s7 / n7) ** 2).clip(0)), "spr_m28": s28 / n28})
+    # spread υπό συνθήκη ευστάθειας (28 ημ.): πόσο «πέφτει» το imbalance όταν ο ΑΔΜΗΕ κάνει ευστάθεια
+    if STAB_FLAG in f and f[STAB_FLAG].notna().any():
+        fl = f[STAB_FLAG]
+        ok = f[SPREAD].notna() & fl.notna()
+        a = pd.DataFrame(
             {
-                "cutoff": c,
-                "hour": hours,
-                "spr_h_last": last.values,
-                "spr_h_m7": w7.mean().values,
-                "spr_h_m28": w28.mean().values,
-                "spr_h_med28": w28.median().values,
-                "spr_h_sd28": w28.std().values,
-                "spr_h_pos7": (w7 > 0).where(w7.notna()).mean().values,
-                "spr_h_pos28": (w28 > 0).where(w28.notna()).mean().values,
-                "imb_h_m7": imb.loc[w7.index].mean().values,
-                "spr_m7": np.nanmean(w7.values),
-                "spr_sd7": np.nanstd(w7.values),
-                "spr_m28": np.nanmean(w28.values),
+                "s1": (f[SPREAD] * fl).where(ok),
+                "n1": fl.where(ok),
+                "s0": (f[SPREAD] * (1 - fl)).where(ok),
+                "n0": (1 - fl).where(ok),
             }
-        )
-        rows_h.append(t)
-        # ίδια ημέρα εβδομάδας, τελευταίες 4 εβδομάδες
-        w = spr.loc[c - pd.Timedelta(days=34): c]
-        for dow in range(7):
-            sub = w[w.index.dayofweek == dow].tail(4)
-            rows_dh.append(
-                pd.DataFrame({"cutoff": c, "dow": dow, "hour": hours, "spr_dh_m4": sub.mean().values})
-            )
-    if not rows_h:
-        return None, None
-    return pd.concat(rows_h, ignore_index=True), pd.concat(rows_dh, ignore_index=True)
+        ).groupby(f["date"]).sum().reindex(spr.index).rolling(28, 1).sum()
+        daily["spr_stab_m28"] = a["s1"] / a["n1"].replace(0, np.nan)
+        daily["spr_nostab_m28"] = a["s0"] / a["n0"].replace(0, np.nan)
+    daily.index.name = "cutoff"
+    daily = daily.reset_index()
+
+    # ίδια ημέρα εβδομάδας: μέσος των 4 τελευταίων ίδιων ημερών <= c, για κάθε dow
+    rows = []
+    for dow in range(7):
+        sub = spr[spr.index.dayofweek == dow].rolling(4, min_periods=1).mean()
+        sub = sub.reindex(spr.index).ffill(limit=6)  # για κάθε c: τελευταία ίδια ημέρα <= c
+        t = _stack({"spr_dh_m4": sub}, "cutoff")
+        t["dow"] = dow
+        rows.append(t)
+    lag_dh = pd.concat(rows, ignore_index=True)
+    names = list(tabs) + [c for c in daily.columns if c != "cutoff"] + ["spr_dh_m4"]
+    return lag_h.merge(daily, on="cutoff", how="left"), lag_dh, names
 
 
-def build_features(df: pd.DataFrame, cfg: Config, known_through: pd.Timestamp | None = None):
-    """Επιστρέφει (frame, feature_cols). Το frame περιέχει date, cutoff, dam, spread, y."""
+def _stab_lags(f: pd.DataFrame) -> tuple[pd.DataFrame, list[str]] | None:
+    """Συχνότητα/ένταση ευστάθειας έως κάθε ημερομηνία c, ανά ώρα."""
+    if STAB_FLAG not in f or f[STAB_FLAG].notna().sum() == 0:
+        return None
+    fl = _hourly_pivot(f, STAB_FLAG)
+    mw = _hourly_pivot(f, "stab_mw")
+    day = fl.mean(axis=1)
+    tabs = {
+        "stab_h_last": fl,
+        "stab_h_m7": fl.rolling(7, min_periods=1).mean(),
+        "stab_h_m28": fl.rolling(28, min_periods=3).mean(),
+        "stab_mw_h_m7": mw.rolling(7, min_periods=1).mean(),
+    }
+    t = _stack(tabs, "stab_cutoff")
+    daily = pd.DataFrame({"stab_d_last": day, "stab_d_m7": day.rolling(7, 1).mean(), "stab_d_m28": day.rolling(28, 3).mean()})
+    daily.index.name = "stab_cutoff"
+    t = t.merge(daily.reset_index(), on="stab_cutoff", how="left")
+    return t, list(tabs) + list(daily.columns)
+
+
+# ---------------------------------------------------------------- κύρια συνάρτηση
+def build_features(
+    df: pd.DataFrame,
+    cfg: Config,
+    known_through: pd.Timestamp | None = None,
+    stab_known_through: pd.Timestamp | None = None,
+):
+    """Επιστρέφει (frame, features κύριου μοντέλου, features μοντέλου ευστάθειας)."""
     loc = df.index.tz_convert(cfg.tz)
     f = pd.DataFrame(index=df.index)
     f["date"] = loc.tz_localize(None).normalize()
@@ -175,34 +222,49 @@ def build_features(df: pd.DataFrame, cfg: Config, known_through: pd.Timestamp | 
     cal_cols = ["hour", "qh", "dow", "month", "doy_sin", "doy_cos", "holiday", "offday"]
 
     exog_cols = _add_exog(f, df, cfg)
+    if "dam" not in f:
+        f["dam"] = df[cfg.col_dam].values if cfg.col_dam in df else np.nan
 
-    # ---- as-of cutoff
+    # ---- στόχοι / ιστορικά (ΔΕΝ μπαίνουν ως features της ίδιας γραμμής)
+    has_imb = cfg.col_imb in df and cfg.col_dam in df
+    f["imbalance"] = df[cfg.col_imb].values if cfg.col_imb in df else np.nan
+    f[SPREAD] = (df[cfg.col_imb] - df[cfg.col_dam]).values if has_imb else np.nan
+    f[TARGET] = f[SPREAD] if cfg.target == "spread" else f["imbalance"]
+    if cfg.col_stab in df:
+        f["stab_mw"] = df[cfg.col_stab].values
+        f[STAB_FLAG] = (f["stab_mw"] > cfg.stab_threshold).astype(float).where(f["stab_mw"].notna())
+
+    # ---- as-of cutoffs
     issue = f["date"] - pd.Timedelta(days=cfg.issue_lead_days)
     f["cutoff"] = published_through(issue, cfg.pub_weekday, cfg.pub_available_same_day)
     if known_through is not None:
         f["cutoff"] = f["cutoff"].clip(upper=pd.Timestamp(known_through).normalize())
+    f["stab_cutoff"] = issue - pd.Timedelta(days=cfg.stab_lag_days)
+    if stab_known_through is not None:
+        f["stab_cutoff"] = f["stab_cutoff"].clip(upper=pd.Timestamp(stab_known_through).normalize())
     f["gap_days"] = (f["date"] - f["cutoff"]).dt.days
 
-    lag_h, lag_dh = _lag_tables(df, cfg, pd.DatetimeIndex(f["cutoff"]))
+    idx = f.index
     lag_cols = ["gap_days"]
-    if lag_h is not None:
-        idx = f.index
+    lags = _imbalance_lags(f) if has_imb else None
+    if lags is not None:
+        lag_h, lag_dh, names = lags
         f = f.merge(lag_h, on=["cutoff", "hour"], how="left").merge(lag_dh, on=["cutoff", "dow", "hour"], how="left")
-        f.index = idx
-        lag_cols += [c for c in lag_h.columns if c not in ("cutoff", "hour")] + ["spr_dh_m4"]
+        lag_cols += names
         if "ida_last_m_dam" in f:
             f["ida_m_dam_x_pos"] = f["ida_last_m_dam"] * f["spr_h_pos28"]
             lag_cols.append("ida_m_dam_x_pos")
 
-    # ---- στόχος
-    if cfg.col_imb in df and cfg.col_dam in df:
-        f[SPREAD] = (df[cfg.col_imb] - df[cfg.col_dam]).values
-    else:
-        f[SPREAD] = np.nan
-    f["imbalance"] = df[cfg.col_imb].values if cfg.col_imb in df else np.nan
-    f[TARGET] = f[SPREAD] if cfg.target == "spread" else f["imbalance"]
-    if "dam" not in f:
-        f["dam"] = df[cfg.col_dam].values if cfg.col_dam in df else np.nan
+    stab_cols = []
+    st = _stab_lags(f)
+    if st is not None:
+        t, stab_cols = st
+        f = f.merge(t, on=["stab_cutoff", "hour"], how="left")
+    f.index = idx
 
-    feats = cal_cols + exog_cols + lag_cols
-    return f, feats
+    stab_feats = cal_cols + [c for c in exog_cols if not c.startswith("ida")] + stab_cols
+    feats = cal_cols + exog_cols + lag_cols + stab_cols
+    if st is not None:
+        f[STAB_PROB] = np.nan  # συμπληρώνεται από το μοντέλο ευστάθειας
+        feats += [STAB_PROB]
+    return f, feats, stab_feats

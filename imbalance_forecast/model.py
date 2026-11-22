@@ -1,4 +1,10 @@
-"""Μοντέλο: quantile gradient boosting για spread (ή imbalance) + ταξινομητής κατεύθυνσης."""
+"""Μοντέλα:
+
+1. Ευστάθεια: ταξινομητής P(ο ΑΔΜΗΕ βάζει αέριο/κόβει ΑΠΕ στο 15λεπτο) -> stab_prob.
+   Στην εκπαίδευση του κύριου μοντέλου το stab_prob είναι out-of-fold (cross-fitting ανά
+   χρονικά μπλοκ), ώστε να μοιάζει με αυτό που θα έχουμε στην πράξη.
+2. Κύριο: quantile gradient boosting για spread (ή imbalance) + ταξινομητής P(imbalance > DAM).
+"""
 from __future__ import annotations
 
 import numpy as np
@@ -6,18 +12,58 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 
 from .config import Config
-from .features import TARGET
+from .features import STAB_FLAG, STAB_PROB, TARGET
 
 
 class ImbalanceModel:
-    def __init__(self, cfg: Config, features: list[str]):
+    def __init__(self, cfg: Config, features: list[str], stab_features: list[str] | None = None):
         self.cfg = cfg
         self.features = features
+        self.stab_features = stab_features or []
         self.reg = {}
         self.clf = None
+        self.stab_clf = None
 
-    def fit(self, frame: pd.DataFrame) -> "ImbalanceModel":
-        d = frame.dropna(subset=[TARGET])
+    # ------------------------------------------------------------ ευστάθεια
+    def _new_stab_clf(self):
+        return HistGradientBoostingClassifier(**self.cfg.gbm_params)
+
+    def _stab_ok(self, stab_train) -> bool:
+        return (
+            STAB_PROB in self.features
+            and stab_train is not None
+            and STAB_FLAG in stab_train
+            and stab_train[STAB_FLAG].dropna().nunique() == 2
+        )
+
+    def _oof_stab(self, train: pd.DataFrame, stab_train: pd.DataFrame) -> np.ndarray:
+        dates = np.sort(train["date"].unique())
+        blocks = np.array_split(dates, max(2, self.cfg.stab_cv_folds))
+        out = np.full(len(train), np.nan)
+        for blk in blocks:
+            in_blk = train["date"].isin(blk).values
+            fit_rows = stab_train[~stab_train["date"].isin(blk)]
+            if fit_rows[STAB_FLAG].nunique() < 2:
+                continue
+            m = self._new_stab_clf().fit(fit_rows[self.stab_features], fit_rows[STAB_FLAG])
+            out[in_blk] = m.predict_proba(train.loc[in_blk, self.stab_features])[:, 1]
+        return out
+
+    def stab_proba(self, frame: pd.DataFrame) -> np.ndarray:
+        if self.stab_clf is None:
+            return np.full(len(frame), np.nan)
+        return self.stab_clf.predict_proba(frame[self.stab_features])[:, 1]
+
+    # ------------------------------------------------------------ fit / predict
+    def fit(self, frame: pd.DataFrame, stab_train: pd.DataFrame | None = None) -> "ImbalanceModel":
+        d = frame.dropna(subset=[TARGET]).copy()
+        if self._stab_ok(stab_train):
+            st = stab_train.dropna(subset=[STAB_FLAG])
+            d[STAB_PROB] = self._oof_stab(d, st)
+            self.stab_clf = self._new_stab_clf().fit(st[self.stab_features], st[STAB_FLAG])
+        elif STAB_PROB in d:
+            d[STAB_PROB] = np.nan
+
         X = d[self.features]
         y = d[TARGET]
         lo, hi = y.quantile(list(self.cfg.winsor))
@@ -25,18 +71,20 @@ class ImbalanceModel:
         for q in self.cfg.quantiles:
             m = HistGradientBoostingRegressor(loss="quantile", quantile=q, **self.cfg.gbm_params)
             self.reg[q] = m.fit(X, y_w)
-        # κατεύθυνση: imbalance > DAM ;
         sign = (d["spread"] > 0).astype(int)
         if sign.nunique() == 2:
             self.clf = HistGradientBoostingClassifier(**self.cfg.gbm_params).fit(X, sign)
         return self
 
     def predict(self, frame: pd.DataFrame) -> pd.DataFrame:
+        frame = frame.copy()
+        out = pd.DataFrame(index=frame.index)
+        if STAB_PROB in self.features:
+            frame[STAB_PROB] = self.stab_proba(frame)
+            out[STAB_PROB] = frame[STAB_PROB]
         X = frame[self.features]
         qs = sorted(self.cfg.quantiles)
-        P = np.column_stack([self.reg[q].predict(X) for q in qs])
-        P = np.sort(P, axis=1)  # αποφυγή διασταύρωσης quantiles
-        out = pd.DataFrame(index=frame.index)
+        P = np.sort(np.column_stack([self.reg[q].predict(X) for q in qs]), axis=1)  # χωρίς διασταύρωση
         dam = frame["dam"].values
         for i, q in enumerate(qs):
             tag = f"q{int(round(q * 100)):02d}"
@@ -46,5 +94,7 @@ class ImbalanceModel:
             else:
                 out[f"imb_{tag}"] = P[:, i]
                 out[f"spread_{tag}"] = P[:, i] - dam
-        out["p_imb_gt_dam"] = self.clf.predict_proba(X)[:, 1] if self.clf is not None else np.nan
+        p = self.clf.predict_proba(X)[:, 1] if self.clf is not None else np.full(len(X), np.nan)
+        out["p_imb_gt_dam"] = p
+        out["p_imb_lt_dam"] = 1 - p
         return out

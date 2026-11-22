@@ -2,7 +2,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from imbalance_forecast import Config, align, backtest, build_features, forecast, metrics, published_through
+from imbalance_forecast import (
+    Config, align, backtest, build_features, forecast, metrics, published_through, stability_report,
+)
 from imbalance_forecast.features import _orthodox_easter
 from imbalance_forecast.synthetic import make_synthetic
 
@@ -40,7 +42,7 @@ def data():
 def test_no_leakage(data):
     """Αλλάζοντας imbalance ΜΕΤΑ το cutoff, τα features δεν πρέπει να αλλάζουν."""
     cfg, df = data
-    f1, feats = build_features(df, cfg)
+    f1, feats, _ = build_features(df, cfg)
     target_day = pd.Timestamp("2025-10-21")
     cutoff = f1.loc[f1["date"] == target_day, "cutoff"].iloc[0]
     assert cutoff == pd.Timestamp("2025-10-12")
@@ -48,31 +50,57 @@ def test_no_leakage(data):
     df2 = df.copy()
     after = df2.index.tz_convert(cfg.tz).tz_localize(None) >= cutoff + pd.Timedelta(days=1)
     df2.loc[after, "imbalance"] = 1e6
-    f2, _ = build_features(df2, cfg)
+    f2, _, _ = build_features(df2, cfg)
     m = f1["date"] == target_day
     pd.testing.assert_frame_equal(f1.loc[m, feats], f2.loc[m, feats])
 
 
-def test_ida_not_available_excluded(data):
+def test_pre_dam_defaults(data):
+    """Πριν τη DAM: καμία IDA, η ευστάθεια της D δεν είναι feature (μόνο η πρόβλεψή της)."""
     cfg, df = data
-    _, feats = build_features(df, cfg)
-    assert "ida1" in feats and "ida2" not in feats and "ida3" not in feats
-    assert "x_stability" in feats
+    _, feats, stab_feats = build_features(df, cfg)
+    assert not any(c.startswith("ida") for c in feats)
+    assert "stab_prob" in feats and "stab_flag" not in feats and "stab_mw" not in feats
+    assert "x_stability" not in feats
     assert "imbalance" not in feats and "spread" not in feats
+    assert "stab_prob" not in stab_feats and "stab_h_m7" in stab_feats
+
+
+def test_ida_when_available(data):
+    cfg, df = data
+    _, feats, _ = build_features(df, Config(**{**cfg.__dict__, "ida_available": ("ida1",)}))
+    assert "ida1" in feats and "ida2" not in feats
+
+
+def test_stability_history_lag(data):
+    """Το ιστορικό ευστάθειας της D-1 (issue) δεν πρέπει να επηρεάζει τα features της D."""
+    cfg, df = data
+    f1, feats, _ = build_features(df, cfg)
+    day = pd.Timestamp("2025-10-21")
+    df2 = df.copy()
+    loc = df2.index.tz_convert(cfg.tz).tz_localize(None).normalize()
+    df2.loc[loc >= day - pd.Timedelta(days=1), "stability"] = 5000.0
+    f2, _, _ = build_features(df2, cfg)
+    m = f1["date"] == day
+    pd.testing.assert_frame_equal(f1.loc[m, feats], f2.loc[m, feats])
 
 
 def test_backtest_and_forecast(data):
     cfg, df = data
     res = backtest(df, cfg, "2025-09-15", "2025-10-15", verbose=False)
     m = metrics(res)
-    assert {"model_q50", "bl_dam", "bl_hist28", "bl_ida"} <= set(m.index)
+    assert {"model_q50", "bl_dam", "bl_hist28"} <= set(m.index) and "bl_ida" not in m.index
     assert np.isfinite(m.loc["model_q50", "MAE"])
     assert (res["imb_q10"] <= res["imb_q90"]).all()
+    assert res["stab_prob"].between(0, 1).all()
+    rep = stability_report(res)
+    assert rep is not None and rep["n_15min"].sum() > 0
 
     # issue Πέμ. 30/10 (πριν τη δημοσίευση) -> γνωστά έως Κυρ. 19/10
     out = forecast(df, cfg, "2025-10-31")
     assert len(out) == 96
     assert out.attrs["imbalance_known_through"] == "2025-10-19"
+    assert out.attrs["stability_known_through"] == "2025-10-29"
 
     # αν τα δεδομένα σταματούν νωρίτερα, δεσμεύει η τελευταία πλήρης ημέρα
     df_live = df.copy()
