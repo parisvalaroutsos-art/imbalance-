@@ -12,7 +12,7 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 
 from .config import Config
-from .features import STAB_FLAG, STAB_PROB, TARGET
+from .features import P_CURT, STAB_FLAG, STAB_PROB, TARGET
 
 
 class ImbalanceModel:
@@ -54,6 +54,12 @@ class ImbalanceModel:
             return np.full(len(frame), np.nan)
         return self.stab_clf.predict_proba(frame[self.stab_features])[:, 1]
 
+    @staticmethod
+    def _add_p_curt(frame: pd.DataFrame) -> None:
+        """P(περικοπή) ≈ P(πλεόνασμα ISP) × ιστορικό P(περικοπή | πλεόνασμα)."""
+        if P_CURT in frame and "curt_given_stab_m28" in frame:
+            frame[P_CURT] = frame[STAB_PROB] * frame["curt_given_stab_m28"]
+
     # ------------------------------------------------------------ fit / predict
     def fit(self, frame: pd.DataFrame, stab_train: pd.DataFrame | None = None) -> "ImbalanceModel":
         d = frame.dropna(subset=[TARGET]).copy()
@@ -63,6 +69,7 @@ class ImbalanceModel:
             self.stab_clf = self._new_stab_clf().fit(st[self.stab_features], st[STAB_FLAG])
         elif STAB_PROB in d:
             d[STAB_PROB] = np.nan
+        self._add_p_curt(d)
 
         X = d[self.features]
         y = d[TARGET]
@@ -82,6 +89,9 @@ class ImbalanceModel:
         if STAB_PROB in self.features:
             frame[STAB_PROB] = self.stab_proba(frame)
             out[STAB_PROB] = frame[STAB_PROB]
+            self._add_p_curt(frame)
+            if P_CURT in frame:
+                out[P_CURT] = frame[P_CURT]
         X = frame[self.features]
         qs = sorted(self.cfg.quantiles)
         P = np.sort(np.column_stack([self.reg[q].predict(X) for q in qs]), axis=1)  # χωρίς διασταύρωση

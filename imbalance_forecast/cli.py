@@ -1,7 +1,7 @@
 """Γραμμή εντολών.
 
     python -m imbalance_forecast demo
-    python -m imbalance_forecast admie --start 2024-01-01 --end 2026-11-23 --out data/admie.csv
+    python -m imbalance_forecast admie --start 2024-01-01 --out data/admie.csv
     python -m imbalance_forecast backtest --data data/prices.csv data/admie.csv --start 2025-10-01
     python -m imbalance_forecast predict  --data data/prices.csv data/admie.csv --date 2026-11-23
 """
@@ -79,38 +79,36 @@ def main(argv=None):
 
     g = sub.add_parser("admie", help="κατέβασμα αρχείων ΑΔΜΗΕ σε CSV")
     g.add_argument("--start", required=True)
-    g.add_argument("--end", default=str(pd.Timestamp.today().normalize() + pd.Timedelta(days=1)))
+    g.add_argument("--end", default=str((pd.Timestamp.today().normalize() + pd.Timedelta(days=1)).date()))
     g.add_argument("--out", default="data/admie.csv")
     g.add_argument("--raw-dir", default="data/raw/admie")
-    g.add_argument("--spec", help="JSON με κατηγορίες/labels (αντικαθιστά το DEFAULT_SPEC)")
-    g.add_argument("--only", nargs="*", help="μόνο αυτές οι σειρές (π.χ. load_forecast res_forecast)")
+    g.add_argument("--only", nargs="*", help="μόνο αυτές οι πηγές: load_forecast res_forecast isp1 imbabe")
+    g.add_argument("--sleep", type=float, default=1.0, help="παύση (s) ανάμεσα στα αιτήματα")
+    g.add_argument("--dam-gate", default="12:00", help="ώρα (τοπική, D-1) πριν την οποία πρέπει να έχει βγει η πρόβλεψη")
 
     gl = sub.add_parser("admie-list", help="τι αρχεία επιστρέφει το API ΑΔΜΗΕ για μια κατηγορία")
     gl.add_argument("--category", required=True)
     gl.add_argument("--date", required=True)
-
-    gi = sub.add_parser("admie-inspect", help="δομή ενός xlsx του ΑΔΜΗΕ (για ρύθμιση labels)")
-    gi.add_argument("--file", required=True)
+    sub.add_parser("admie-types", help="κατάλογος κατηγοριών αρχείων ΑΔΜΗΕ")
 
     a = ap.parse_args(argv)
     pd.set_option("display.width", 200)
 
     if a.cmd == "admie":
-        from .admie import DEFAULT_SPEC, fetch_admie
+        from .admie import fetch_admie
 
-        spec = json.loads(Path(a.spec).read_text()) if a.spec else DEFAULT_SPEC
-        fetch_admie(a.start, a.end, a.out, a.raw_dir, spec, a.only)
+        fetch_admie(a.start, a.end, a.out, a.raw_dir, only=a.only, sleep=a.sleep, dam_gate=a.dam_gate)
         return
     if a.cmd == "admie-list":
         from .admie import list_files
 
-        items = list_files(a.category, a.date, a.date)
-        print(json.dumps(items, indent=2, ensure_ascii=False)[:5000])
+        print(json.dumps(list_files(a.category, a.date, a.date), indent=2, ensure_ascii=False))
         return
-    if a.cmd == "admie-inspect":
-        from .admie import inspect
+    if a.cmd == "admie-types":
+        from .admie import list_types
 
-        print(inspect(Path(a.file)))
+        for t in list_types():
+            print(f"{t['filetype']:42s} {t['process'][:25]:25s} {t['data_type'][:40]:40s} {t['time_gate']}")
         return
 
     from .pipeline import backtest, forecast
@@ -136,7 +134,7 @@ def main(argv=None):
             f"Issue: {out.attrs['issue_date']} | imbalance γνωστό έως: {out.attrs['imbalance_known_through']}"
             f" | ευστάθεια γνωστή έως: {out.attrs['stability_known_through']}"
         )
-        cols = [c for c in ["dam", "stab_prob", "spread_q10", "spread_q50", "spread_q90", "imb_q50", "p_imb_lt_dam"]
+        cols = [c for c in ["dam", "stab_prob", "p_curt", "spread_q10", "spread_q50", "spread_q90", "imb_q50", "p_imb_lt_dam"]
                 if c in out]
         h = out[cols].groupby(out.index.hour).mean().round(2)
         h.index.name = "ώρα"

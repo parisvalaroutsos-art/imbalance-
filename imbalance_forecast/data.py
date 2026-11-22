@@ -55,8 +55,9 @@ def align(df: pd.DataFrame, cfg: Config) -> pd.DataFrame:
     out = df.reindex(grid.union(df.index)).sort_index()
     out = out.ffill(limit=3).reindex(grid)
     # τιμή imbalance δεν γεμίζεται: ό,τι λείπει θεωρείται μη δημοσιευμένο
-    if cfg.col_imb in df.columns:
-        out[cfg.col_imb] = df[cfg.col_imb].reindex(grid)
+    for c in (cfg.col_imb, cfg.col_curt):
+        if c in df.columns:
+            out[c] = df[c].reindex(grid)
     out.index = out.index.tz_convert(cfg.tz)
     out.index.name = "timestamp"
     return out

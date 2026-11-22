@@ -59,6 +59,10 @@ class Config:
     # γνωστή πριν τη DAM, οπότε προβλέπεται από ξεχωριστό μοντέλο (stab_prob).
     col_stab: str = "stability"
     stab_threshold: float = 0.0  # γεγονός ευστάθειας όταν stability > threshold
-    # Το ιστορικό ευστάθειας (από ISP/ΑΔΜΗΕ) είναι γνωστό έως issue_date - stab_lag_days.
-    stab_lag_days: int = 1
+    # Το ιστορικό ευστάθειας είναι γνωστό έως issue_date - stab_lag_days.
+    # ISP1ISPResults της ημέρας X δημοσιεύεται X-1 ~18:45 -> στο issue (D-1 πρωί) γνωστό έως και D-1 -> 0.
+    stab_lag_days: int = 0
+    # Σημαία περικοπής ΑΔΜΗΕ (IMBABE Curt_Flag): έρχεται μαζί με τα imbalance (εβδομαδιαία καθυστέρηση).
+    # Χρησιμοποιείται για να μάθει το μοντέλο πόσο συχνά το πλεόνασμα ISP γίνεται περικοπή (-> imbalance -100).
+    col_curt: str = "curt_flag"
     stab_cv_folds: int = 4  # cross-fitting για out-of-fold stab_prob στην εκπαίδευση

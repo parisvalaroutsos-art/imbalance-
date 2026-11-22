@@ -62,17 +62,19 @@ def make_synthetic(start="2024-01-01", end="2026-11-22", seed: int = 7, tz: str 
     stab_event = rng.random(n) < 1 / (1 + np.exp(-logit))
     # τα γεγονότα διαρκούν ώρες: εξομάλυνση ανά ώρα
     stab_event = pd.Series(stab_event.astype(float)).rolling(8, center=True, min_periods=1).mean().values > 0.5
-    stability = np.where(stab_event, rng.uniform(200, 1200, n), 0.0)  # MW περικοπής ΑΠΕ
+    stability = np.where(stab_event, rng.uniform(200, 1200, n), 0.0)  # MW πλεονάσματος ISP
     spread = (
         0.06 * sys_short
         + week_bias
-        - 45 * stab_event
-        - 0.03 * stability
+        - 25 * stab_event
+        - 0.02 * stability
         + rng.standard_t(3, n) * 15
     )
+    # περίπου 1 στα 3 πλεονάσματα γίνεται περικοπή ΑΔΜΗΕ -> imbalance στο κατώτατο (-100)
+    curt = stab_event & (rng.random(n) < 0.15 + 0.5 * (stability > 700))
     spikes = rng.random(n) < 0.003
     spread[spikes] += rng.choice([-1, 1], spikes.sum()) * rng.uniform(100, 400, spikes.sum())
-    imbalance = dam + spread
+    imbalance = np.where(curt, -100.0, dam + spread)
 
     df = pd.DataFrame(
         {
@@ -84,6 +86,7 @@ def make_synthetic(start="2024-01-01", end="2026-11-22", seed: int = 7, tz: str 
             "res_forecast": res_fc,
             "load_forecast": load_fc,
             "stability": stability,
+            "curt_flag": curt.astype(float),
         },
         index=idx,
     )

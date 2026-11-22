@@ -48,7 +48,7 @@ def backtest(df: pd.DataFrame, cfg: Config, start, end=None, verbose: bool = Tru
             model = ImbalanceModel(cfg, feats, stab_feats).fit(train, stab_train)
             trained_at = cutoff
         pred = model.predict(grp)
-        keep = ["date", "cutoff", "dam", "imbalance", "spread"] + ([STAB_FLAG] if STAB_FLAG in grp else [])
+        keep = ["date", "cutoff", "dam", "imbalance", "spread"] + [c for c in (STAB_FLAG, "curt") if c in grp]
         res = grp[keep].join(pred).join(baselines(grp))
         results.append(res)
         if verbose:
@@ -119,6 +119,7 @@ def stability_report(res: pd.DataFrame) -> pd.DataFrame | None:
         {
             "n_15min": g.size(),
             "stab_actual": g[STAB_FLAG].mean() if STAB_FLAG in r else np.nan,
+            "curt_actual": g["curt"].mean() if "curt" in r else np.nan,
             "spread_mean": g["spread"].mean(),
             "spread_q50_pred": g["spread_q50"].mean(),
             "P(imb<dam)_actual": g["spread"].apply(lambda s: (s < 0).mean()),

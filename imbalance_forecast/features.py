@@ -20,6 +20,8 @@ SPREAD = "spread"
 TARGET = "y"
 STAB_FLAG = "stab_flag"
 STAB_PROB = "stab_prob"
+CURT = "curt"
+P_CURT = "p_curt"
 
 
 # ---------------------------------------------------------------- αργίες
@@ -96,7 +98,7 @@ def _add_exog(f: pd.DataFrame, df: pd.DataFrame, cfg: Config) -> list[str]:
         cols += ["ida_last", "ida_last_m_dam"]
 
     # επιπλέον στήλες χρήστη (πρέπει να είναι γνωστές στο issue, π.χ. προβλέψεις)
-    known = {cfg.col_dam, cfg.col_imb, cfg.col_res, cfg.col_load, cfg.col_stab, *cfg.ida_cols}
+    known = {cfg.col_dam, cfg.col_imb, cfg.col_res, cfg.col_load, cfg.col_stab, cfg.col_curt, *cfg.ida_cols}
     for c in df.columns:
         if c not in known:
             f[f"x_{c}"] = df[c].values
@@ -162,6 +164,20 @@ def _imbalance_lags(f: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, list[s
         ).groupby(f["date"]).sum().reindex(spr.index).rolling(28, 1).sum()
         daily["spr_stab_m28"] = a["s1"] / a["n1"].replace(0, np.nan)
         daily["spr_nostab_m28"] = a["s0"] / a["n0"].replace(0, np.nan)
+    # περικοπή ΑΔΜΗΕ (Curt_Flag): συχνότητα ανά ώρα και P(περικοπή | πλεόνασμα ISP), 28 ημ.
+    curt_tabs = {}
+    if CURT in f and f[CURT].notna().any():
+        cp = _hourly_pivot(f, CURT).reindex(spr.index)
+        curt_tabs["curt_h_m28"] = cp.rolling(28, min_periods=3).mean()
+        cd = f.groupby("date")[CURT].mean().reindex(spr.index)
+        daily["curt_d_m28"] = cd.rolling(28, 3).mean()
+        if STAB_FLAG in f:
+            ok = f[CURT].notna() & f[STAB_FLAG].notna()
+            a = pd.DataFrame({"cs": (f[CURT] * f[STAB_FLAG]).where(ok), "s": f[STAB_FLAG].where(ok)})
+            a = a.groupby(f["date"]).sum().reindex(spr.index).rolling(28, 1).sum()
+            daily["curt_given_stab_m28"] = a["cs"] / a["s"].replace(0, np.nan)
+    if curt_tabs:
+        lag_h = lag_h.merge(_stack(curt_tabs, "cutoff"), on=["cutoff", "hour"], how="left")
     daily.index.name = "cutoff"
     daily = daily.reset_index()
 
@@ -174,7 +190,7 @@ def _imbalance_lags(f: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, list[s
         t["dow"] = dow
         rows.append(t)
     lag_dh = pd.concat(rows, ignore_index=True)
-    names = list(tabs) + [c for c in daily.columns if c != "cutoff"] + ["spr_dh_m4"]
+    names = list(tabs) + list(curt_tabs) + [c for c in daily.columns if c != "cutoff"] + ["spr_dh_m4"]
     return lag_h.merge(daily, on="cutoff", how="left"), lag_dh, names
 
 
@@ -230,6 +246,8 @@ def build_features(
     f["imbalance"] = df[cfg.col_imb].values if cfg.col_imb in df else np.nan
     f[SPREAD] = (df[cfg.col_imb] - df[cfg.col_dam]).values if has_imb else np.nan
     f[TARGET] = f[SPREAD] if cfg.target == "spread" else f["imbalance"]
+    if cfg.col_curt in df:
+        f[CURT] = df[cfg.col_curt].values
     if cfg.col_stab in df:
         f["stab_mw"] = df[cfg.col_stab].values
         f[STAB_FLAG] = (f["stab_mw"] > cfg.stab_threshold).astype(float).where(f["stab_mw"].notna())
@@ -267,4 +285,7 @@ def build_features(
     if st is not None:
         f[STAB_PROB] = np.nan  # συμπληρώνεται από το μοντέλο ευστάθειας
         feats += [STAB_PROB]
+        if "curt_given_stab_m28" in f:
+            f[P_CURT] = np.nan  # = stab_prob * P(περικοπή | πλεόνασμα)
+            feats += [P_CURT]
     return f, feats, stab_feats
