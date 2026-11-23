@@ -126,8 +126,10 @@ class ImbalanceModel:
         out["p_spike_up"] = self.clf_up.predict_proba(X)[:, 1] if self.clf_up is not None else np.nan
         # σημειακή πρόβλεψη: DAM, ή το τρέχον κατώτατο όριο όταν η περικοπή είναι πιθανή
         point = pd.Series(dam, index=frame.index, dtype=float)
-        if self.cfg.stage != "pre_dam":
-            # ίδια ημέρα (ISP2/ISP3, IDA): η διάμεσος του μοντέλου κερδίζει DAM και IDA στο backtest
+        if "ida_last" in frame:  # τελευταία γνωστή τιμή αγοράς
+            point = frame["ida_last"].astype(float).fillna(point)
+        if self.cfg.point_mode == "q50":
+            # isp2/isp3: η διάμεσος του μοντέλου κερδίζει DAM και IDA στο backtest
             point = out["imb_q50"].copy()
         elif P_CURT in out and "imb_min28" in frame:
             hit = (out[P_CURT] >= self.cfg.point_curt_threshold) & frame["imb_min28"].notna()

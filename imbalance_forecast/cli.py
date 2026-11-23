@@ -88,6 +88,16 @@ def main(argv=None):
     p.add_argument("--issue-date", help="ημέρα έκδοσης (προεπιλογή: date - lead)")
     p.add_argument("--out", default=None)
 
+    r = sub.add_parser("report", help="έλεγχος διαθεσιμότητας + πρόβλεψη + πίνακας HTML (για email)")
+    _common(r)
+    r.add_argument("--data", nargs="+", required=True)
+    r.add_argument("--date", required=True)
+    r.add_argument("--issue-date", default=None)
+    r.add_argument("--label", default="", help="ετικέτα εκτέλεσης στον τίτλο")
+    r.add_argument("--html", required=True, help="αρχείο εξόδου HTML")
+    r.add_argument("--csv", default=None, help="πλήρης 15λεπτη πρόβλεψη")
+    r.add_argument("--allow-missing", action="store_true", help="τρέξε ακόμα κι αν λείπουν δεδομένα")
+
     g = sub.add_parser("admie", help="κατέβασμα αρχείων ΑΔΜΗΕ σε CSV")
     g.add_argument("--start", required=True)
     g.add_argument("--end", default=str((pd.Timestamp.today().normalize() + pd.Timedelta(days=1)).date()))
@@ -137,6 +147,21 @@ def main(argv=None):
     from .pipeline import backtest, forecast
 
     cfg = _cfg(a)
+    if a.cmd == "report":
+        from .report import missing, to_html
+
+        df = load_data(a.data, cfg)
+        miss = missing(df, cfg.stage, a.date, cfg.tz)
+        if miss and not a.allow_missing:
+            print(f"NOT_READY {cfg.stage}: λείπουν για {a.date}: {miss}")
+            raise SystemExit(3)
+        out = forecast(df, cfg, a.date, a.issue_date)
+        notes = [f"Δεν είχαν δημοσιευθεί: {miss}"] if miss else []
+        Path(a.html).write_text(to_html(out, cfg, a.date, a.label, notes), encoding="utf-8")
+        if a.csv:
+            out.to_csv(a.csv)
+        print(f"READY {cfg.stage}: {a.html}")
+        return
     if a.cmd in ("demo", "backtest"):
         if a.cmd == "demo":
             from .synthetic import make_synthetic
