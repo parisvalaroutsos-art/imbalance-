@@ -77,7 +77,7 @@ class Config:
     # Σημαία περικοπής ΑΔΜΗΕ (IMBABE Curt_Flag): έρχεται μαζί με τα imbalance (εβδομαδιαία καθυστέρηση).
     # Χρησιμοποιείται για να μάθει το μοντέλο πόσο συχνά το πλεόνασμα ISP γίνεται περικοπή (-> imbalance -100).
     col_curt: str = "curt_flag"
-    # Σημειακή πρόβλεψη imbalance (imb_point): DAM, εκτός αν p_curt >= κατώφλι -> κατώτατο όριο
+    # Σημειακή πρόβλεψη imbalance (imb_point). Στάδια isp2/isp3: = imb_q50. Πριν τη DAM: DAM, εκτός αν p_curt >= κατώφλι -> κατώτατο όριο
     # (ελάχιστο imbalance τελευταίων 28 γνωστών ημερών). Backtest 11/2025-11/2026: MAE 84,3 έναντι 87,0 της DAM.
     point_curt_threshold: float = 0.4
     # Ανοδικό σπάικ: imbalance > DAM + spike_up (€/MWh) -> πιθανότητα p_spike_up

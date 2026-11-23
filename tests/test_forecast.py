@@ -150,3 +150,4 @@ def test_stage_isp2_isp3(data):
     res = backtest(d, c3, "2025-10-01", "2025-10-20", verbose=False)
     assert len(res) and (res.index.tz_convert(cfg.tz).hour >= 12).all()
     assert res["p_spike_up"].between(0, 1).all()
+    assert np.allclose(res["imb_point"], res["imb_q50"])  # ίδια ημέρα: σημειακή = διάμεσος
