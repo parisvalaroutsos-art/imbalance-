@@ -7,7 +7,10 @@ from dataclasses import dataclass, field
 @dataclass
 class Config:
     # --- Χρόνος / time ---
-    tz: str = "Europe/Athens"
+    # Ζώνη ώρας ΑΓΟΡΑΣ: η ημέρα DAM/ISP/imbalance ορίζεται σε CET/CEST (00:00-24:00 CET = 01:00-01:00
+    # ώρα Ελλάδας). Επαληθεύτηκε: κορυφή ΦΒ στα αρχεία ΑΔΜΗΕ/ΕΧΕ στις ~11:25 της θέσης = ηλιακό μεσημέρι
+    # σε CET, και οι ημέρες αλλαγής ώρας στο IMBABE/ISP1 έχουν επανάληψη/κενό στις 02:00 (κανόνας CET).
+    tz: str = "Europe/Berlin"
     mtu: str = "15min"  # χρονική ανάλυση (ISP/imbalance MTU)
 
     # --- Χρονισμός πρόβλεψης / forecast timing ---

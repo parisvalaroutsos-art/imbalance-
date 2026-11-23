@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 
-def make_synthetic(start="2024-01-01", end="2026-11-22", seed: int = 7, tz: str = "Europe/Athens") -> pd.DataFrame:
+def make_synthetic(start="2024-01-01", end="2026-11-22", seed: int = 7, tz: str = "Europe/Berlin") -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     idx = pd.date_range(start, end, freq="15min", tz=tz, inclusive="left")
     n = len(idx)

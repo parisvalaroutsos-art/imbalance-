@@ -37,7 +37,7 @@ PUB_PAGES = {
 COL = {"DAM": "dam", "IDA1": "ida1", "IDA2": "ida2", "IDA3": "ida3",
        "CRIDA1": "ida1", "CRIDA2": "ida2", "CRIDA3": "ida3"}
 UA = {"User-Agent": "Mozilla/5.0 (imbalance-forecast research script)"}
-TZ = "Europe/Athens"
+TZ = "Europe/Berlin"  # ώρα αγοράς (CET/CEST), βλ. config.tz
 FILE_RX = re.compile(r"(\d{8})_EL-(DAM|IDA[123]|CRIDA[123])_ResultsSummary_EN_v(\d+)")
 PORTLET = "com_liferay_asset_publisher_web_portlet_AssetPublisherPortlet_INSTANCE_"
 

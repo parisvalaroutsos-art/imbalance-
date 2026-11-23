@@ -37,7 +37,7 @@ import pandas as pd
 API = "https://www.admie.gr/getOperationMarketFilewRange"
 TYPES_API = "https://www.admie.gr/getFiletypeInfoEN"
 UA = {"User-Agent": "Mozilla/5.0 (imbalance-forecast research script)"}
-TZ = "Europe/Athens"
+TZ = "Europe/Berlin"  # ώρα αγοράς (CET/CEST), βλ. config.tz
 
 SOURCES: dict[str, dict] = {
     "load_forecast": {"category": "ISP1DayAheadLoadForecast", "parser": "forecast", "version": "pre_dam"},

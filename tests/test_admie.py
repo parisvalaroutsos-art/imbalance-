@@ -13,7 +13,7 @@ DAY = pd.Timestamp("2026-11-20")
 def test_parse_load_forecast():
     s = parse_forecast(FX / "20261120_ISP1DayAheadLoadForecast_01.xlsx", DAY)
     assert len(s) == 96
-    assert str(s.index[0]) == "2026-11-20 00:00:00+02:00"
+    assert str(s.index[0]) == "2026-11-20 00:00:00+01:00"
     assert s.iloc[0] == 4200 and s.iloc[1] == 4140
 
 
@@ -26,7 +26,7 @@ def test_parse_res_forecast():
 def test_parse_isp_results():
     df = parse_isp_results(FX / "20261120_ISP1ISPResults_01.xlsx", DAY)
     assert len(df) == 96  # χωρίς τη στήλη TOTAL
-    t = pd.Timestamp("2026-11-20 10:00", tz="Europe/Athens")
+    t = pd.Timestamp("2026-11-20 10:00", tz="Europe/Berlin")
     assert df.loc[t, "isp_energy_surplus"] == pytest.approx(-2062.362)
     assert df.loc[t, "stability"] == pytest.approx(2062.362)
     assert df.loc[t, "isp_renewables"] == 9228 and df.loc[t, "isp_thermal"] == pytest.approx(1187.9)
@@ -36,7 +36,7 @@ def test_parse_isp_results():
 def test_parse_imbabe():
     df = parse_imbabe(FX / "20261109_IMBABE_01.xlsx")
     assert len(df) == 7 * 96
-    assert str(df.index[0]) == "2026-11-09 00:00:00+02:00"
+    assert str(df.index[0]) == "2026-11-09 00:00:00+01:00"
     assert df["imbalance"].iloc[0] == 550.0
     assert df["curt_flag"].sum() == 35
     assert (df.loc[df["curt_flag"] == 1, "imbalance"] == -100).all()
@@ -58,4 +58,13 @@ def test_forecast_dst_days_wallclock():
     assert len(autumn) == 100 and autumn.notna().all()
     spring = parse_forecast(FX / "20250330_ISP1DayAheadLoadForecast_01.xlsx", pd.Timestamp("2025-03-30"))
     assert len(spring) == 46 and spring.notna().all()
-    assert not ((spring.index.hour == 3) & (spring.index.day == 30)).any()
+    assert not ((spring.index.hour == 2) & (spring.index.day == 30)).any()
+
+
+def test_imbabe_dst_week_is_cet():
+    """Εβδομάδα αλλαγής ώρας: 676 τέταρτα, επανάληψη της 02:00 (κανόνας CET) -> σωστή χρονοσειρά."""
+    df = parse_imbabe(FX / "20251020_IMBABE_02.xlsx")
+    assert len(df) == 7 * 96 + 4
+    assert df.index.is_unique and df.index.is_monotonic_increasing
+    assert str(df.index[0]) == "2025-10-20 00:00:00+02:00"  # CEST
+    assert str(df.index[-1]) == "2025-10-26 23:45:00+01:00"  # CET
