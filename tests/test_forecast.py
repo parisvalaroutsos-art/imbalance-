@@ -133,13 +133,13 @@ def test_unit_availability_by_stage(data):
 
     cfg, df = data
     d = _with_stage_cols(df, cfg)
-    f0, feats0, _ = build_features(d, stage_config("pre_dam"))
+    f0, feats0, _ = build_features(d, stage_config("pre_dam", use_unit_avail=True))
     assert "ua_margin" in feats0 and "sd_ua1_thermal" in feats0 and "ua_rev" not in feats0
     assert not any(c.startswith(("sd_ua2", "sd_ua3", "x_ua")) for c in feats0)
     assert (f0["ua_avail"] == 8000).all()
-    f3, feats3, _ = build_features(d, stage_config("isp3"))
+    f3, feats3, _ = build_features(d, stage_config("isp3", use_unit_avail=True))
     assert (f3["ua_avail"] == 7500).all() and (f3["ua_rev"] == -500).all()
-    _, feats_nu, _ = build_features(d, stage_config("isp3", use_unit_avail=False))
+    _, feats_nu, _ = build_features(d, stage_config("isp3"))  # προεπιλογή: χωρίς
     assert not any("ua" in c.split("_")[0] or c.startswith("sd_ua") for c in feats_nu)
 
 
@@ -148,7 +148,7 @@ def test_stage_columns_never_leak_pre_dam(data):
     cfg, df = data
     _, feats, _ = build_features(_with_stage_cols(df, cfg), cfg)
     assert not any("isp2" in c or "isp3" in c for c in feats)
-    assert not any(c.startswith("sd_") and not c.startswith("sd_ua1") for c in feats)  # μόνο ISP1 διαθεσιμότητα
+    assert not any(c.startswith("sd_") for c in feats)
 
 
 def test_stage_isp2_isp3(data):

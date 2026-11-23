@@ -117,6 +117,8 @@ def stage_config(stage: str = "pre_dam", **overrides) -> Config:
     if stage not in STAGES:
         raise ValueError(f"Άγνωστο στάδιο {stage!r}: {list(STAGES)}")
     base = dict(STAGES[stage])
-    if not overrides.pop("use_unit_avail", True):  # σύγκριση χωρίς διαθεσιμότητα μονάδων
+    # Διαθεσιμότητα μονάδων: εκτός ως προεπιλογή. Backtest 11/2025-11/2026: καμία βελτίωση σε σφάλμα,
+    # χαμηλά ή υψηλά imbalance (τα σπάικ συμβαίνουν σε ώρες ΦΒ με μεγάλο περιθώριο, όχι σε έλλειψη μονάδων).
+    if not overrides.pop("use_unit_avail", False):
         base["same_day_cols"] = tuple(c for c in base["same_day_cols"] if not c.startswith("ua"))
     return Config(**{**base, "stage": stage, **overrides})
