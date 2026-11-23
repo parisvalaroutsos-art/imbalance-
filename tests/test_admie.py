@@ -68,3 +68,13 @@ def test_imbabe_dst_week_is_cet():
     assert df.index.is_unique and df.index.is_monotonic_increasing
     assert str(df.index[0]) == "2025-10-20 00:00:00+02:00"  # CEST
     assert str(df.index[-1]) == "2025-10-26 23:45:00+01:00"  # CET
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+def test_parse_isp3_half_day():
+    """ISP3 καλύπτει μόνο 12:00-24:00 -> ώρες από την επικεφαλίδα, όχι «48 μισάωρα όλης της ημέρας»."""
+    df = parse_isp_results(FX / "20261120_ISP3ISPResults_01.xlsx", DAY)
+    assert len(df) == 48
+    assert str(df.index[0]) == "2026-11-20 12:00:00+01:00"
+    assert str(df.index[-1]) == "2026-11-20 23:45:00+01:00"
+    assert df["isp_renewables"].iloc[0] == 9317

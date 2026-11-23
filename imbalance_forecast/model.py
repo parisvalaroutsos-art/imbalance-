@@ -22,6 +22,7 @@ class ImbalanceModel:
         self.stab_features = stab_features or []
         self.reg = {}
         self.clf = None
+        self.clf_up = None
         self.stab_clf = None
 
     # ------------------------------------------------------------ ευστάθεια
@@ -93,6 +94,9 @@ class ImbalanceModel:
         sign = (d["spread"] > 0).astype(int)
         if sign.nunique() == 2:
             self.clf = HistGradientBoostingClassifier(**self.cfg.gbm_params).fit(X[keep], sign[keep])
+        up = (d["spread"] > self.cfg.spike_up).astype(int)  # ανοδικό «σπάικ» imbalance
+        if up.nunique() == 2:
+            self.clf_up = HistGradientBoostingClassifier(**self.cfg.gbm_params).fit(X[keep], up[keep])
         return self
 
     def predict(self, frame: pd.DataFrame) -> pd.DataFrame:
@@ -119,6 +123,7 @@ class ImbalanceModel:
         p = self.clf.predict_proba(X)[:, 1] if self.clf is not None else np.full(len(X), np.nan)
         out["p_imb_gt_dam"] = p
         out["p_imb_lt_dam"] = 1 - p
+        out["p_spike_up"] = self.clf_up.predict_proba(X)[:, 1] if self.clf_up is not None else np.nan
         # σημειακή πρόβλεψη: DAM, ή το τρέχον κατώτατο όριο όταν η περικοπή είναι πιθανή
         point = pd.Series(dam, index=frame.index, dtype=float)
         if P_CURT in out and "imb_min28" in frame:

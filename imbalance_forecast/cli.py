@@ -14,15 +14,20 @@ from pathlib import Path
 
 import pandas as pd
 
-from .config import Config
+from .config import STAGES, stage_config
 from .data import align, load_data
 
 
 def _cfg(a) -> Config:
-    return Config(
+    over = {}
+    if a.lead is not None:
+        over["issue_lead_days"] = a.lead
+    if a.ida is not None:
+        over["ida_available"] = tuple(a.ida)
+    return stage_config(
+        a.stage,
+        **over,
         target=a.target,
-        issue_lead_days=a.lead,
-        ida_available=tuple(a.ida) if a.ida else (),
         pub_available_same_day=a.pub_same_day,
         train_window_days=a.window,
         retrain_every_weeks=getattr(a, "retrain_every", 1),
@@ -31,17 +36,18 @@ def _cfg(a) -> Config:
 
 
 def _common(p):
+    p.add_argument("--stage", choices=list(STAGES), default="pre_dam",
+                   help="pre_dam: D-1 πριν τη DAM | isp2: D ~00:30 (IDA1-2, ISP1-2) | isp3: D ~12:30 (IDA3, ISP3, 12-24h)")
     p.add_argument("--target", choices=["spread", "imbalance"], default="spread")
-    p.add_argument("--lead", type=int, default=1, help="ημέρες πριν την ημέρα-στόχο που εκδίδεται η πρόβλεψη")
-    p.add_argument("--ida", nargs="*", default=[],
-                   help="διαθέσιμες IDA στο issue. Προεπιλογή: καμία (πρόβλεψη πριν τη DAM)")
+    p.add_argument("--lead", type=int, default=None, help="ημέρες πριν την ημέρα-στόχο (προεπιλογή: από το στάδιο)")
+    p.add_argument("--ida", nargs="*", default=None, help="διαθέσιμες IDA στο issue (προεπιλογή: από το στάδιο)")
     p.add_argument("--pub-same-day", action="store_true", help="τα imbalance της Πέμπτης διαθέσιμα ήδη την Πέμπτη")
     p.add_argument("--window", type=int, default=365, help="παράθυρο εκπαίδευσης (ημέρες)")
     p.add_argument("--stab-threshold", type=float, default=0.0, help="MW περικοπής πάνω από τα οποία = ευστάθεια")
 
 
-def _print_backtest(res, out):
-    from .pipeline import metrics, stability_report
+def _print_backtest(res, out, cfg):
+    from .pipeline import metrics, spike_report, stability_report
 
     res.to_csv(out)
     print("\nΑποτελέσματα (τιμή imbalance, €/MWh):")
@@ -50,6 +56,10 @@ def _print_backtest(res, out):
     if rep is not None:
         print("\nΕυστάθεια -> imbalance (ανά προβλεπόμενη πιθανότητα ευστάθειας):")
         print(rep.round(3).to_string())
+    sp = spike_report(res, cfg.spike_up)
+    if sp is not None:
+        print("\nΑνοδικό σπάικ (imbalance > DAM + spike_up) ανά προβλεπόμενη πιθανότητα p_spike_up:")
+        print(sp.round(3).to_string())
     print(f"\nΑποθηκεύτηκε: {Path(out).resolve()}")
 
 
@@ -83,7 +93,7 @@ def main(argv=None):
     g.add_argument("--end", default=str((pd.Timestamp.today().normalize() + pd.Timedelta(days=1)).date()))
     g.add_argument("--out", default="data/admie.csv")
     g.add_argument("--raw-dir", default="data/raw/admie")
-    g.add_argument("--only", nargs="*", help="μόνο αυτές οι πηγές: load_forecast res_forecast isp1 imbabe")
+    g.add_argument("--only", nargs="*", help="μόνο αυτές οι πηγές: load_forecast res_forecast isp1 imbabe isp2 isp3")
     g.add_argument("--sleep", type=float, default=1.0, help="παύση (s) ανάμεσα στα αιτήματα")
     g.add_argument("--dam-gate", default="12:00", help="ώρα (τοπική, D-1) πριν την οποία πρέπει να έχει βγει η πρόβλεψη")
 
@@ -138,8 +148,9 @@ def main(argv=None):
             df = load_data(a.data, cfg)
             end = a.end
         print(f"Δεδομένα: {df.index.min()} .. {df.index.max()} | στήλες: {list(df.columns)}")
-        print(f"Issue D-{cfg.issue_lead_days}, IDA διαθέσιμες: {list(cfg.ida_available) or 'καμία (πριν τη DAM)'}")
-        _print_backtest(backtest(df, cfg, a.start, end), a.out)
+        print(f"Στάδιο {cfg.stage} | issue D-{cfg.issue_lead_days} | IDA: {list(cfg.ida_available) or 'καμία'}"
+              + (f" | ώρες {cfg.target_hours[0]}-{cfg.target_hours[1]}" if cfg.target_hours else ""))
+        _print_backtest(backtest(df, cfg, a.start, end), a.out, cfg)
     else:
         df = load_data(a.data, cfg)
         out = forecast(df, cfg, a.date, a.issue_date)
@@ -147,7 +158,7 @@ def main(argv=None):
             f"Issue: {out.attrs['issue_date']} | imbalance γνωστό έως: {out.attrs['imbalance_known_through']}"
             f" | ευστάθεια γνωστή έως: {out.attrs['stability_known_through']}"
         )
-        cols = [c for c in ["dam", "stab_prob", "p_curt", "spread_q10", "spread_q50", "spread_q90", "imb_q50", "imb_point", "p_imb_lt_dam"]
+        cols = [c for c in ["dam", "stab_prob", "p_curt", "spread_q10", "spread_q50", "spread_q90", "imb_q50", "imb_point", "p_imb_lt_dam", "p_spike_up"]
                 if c in out]
         h = out[cols].groupby(out.index.hour).mean().round(2)
         h.index.name = "ώρα"

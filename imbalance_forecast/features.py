@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from .availability import published_through
-from .config import Config
+from .config import ALL_STAGE_COLS, Config
 
 SPREAD = "spread"
 TARGET = "y"
@@ -97,8 +97,30 @@ def _add_exog(f: pd.DataFrame, df: pd.DataFrame, cfg: Config) -> list[str]:
         f["ida_last_m_dam"] = f["ida_last"] - f["dam"]
         cols += ["ida_last", "ida_last_m_dam"]
 
+    # ενδοημερήσια πληροφορία της ίδιας ημέρας (ISP1/ISP2/ISP3), μόνο όση είναι γνωστή στο στάδιο
+    for c in cfg.same_day_cols:
+        if c not in df:
+            continue
+        n = f"sd_{c}"
+        f[n] = df[c].values
+        f[f"{n}_dmean"] = f.groupby("date")[n].transform("mean")
+        cols += [n, f"{n}_dmean"]
+        if c == cfg.col_stab or c.startswith("stab_"):
+            f[f"{n}_pos"] = (f[n] > cfg.stab_threshold).astype(float).where(f[n].notna())
+            f[f"{n}_hrs"] = f.groupby("date")[f"{n}_pos"].transform("sum") / 4
+            cols += [f"{n}_pos", f"{n}_hrs"]
+    for sfx in ("isp2", "isp3"):
+        r, l_ = f"res_{sfx}", f"load_{sfx}"
+        if r in cfg.same_day_cols and r in df and l_ in df:
+            f[f"sd_resid_{sfx}"] = (df[l_] - df[r]).values
+            cols.append(f"sd_resid_{sfx}")
+            if "res" in f:  # αναθεώρηση πρόβλεψης ΑΠΕ από το ISP1 (pre-DAM)
+                f[f"sd_res_rev_{sfx}"] = f[f"sd_{r}"] - f["res"]
+                cols.append(f"sd_res_rev_{sfx}")
+
     # επιπλέον στήλες χρήστη (πρέπει να είναι γνωστές στο issue, π.χ. προβλέψεις)
-    known = {cfg.col_dam, cfg.col_imb, cfg.col_res, cfg.col_load, cfg.col_stab, cfg.col_curt, *cfg.ida_cols}
+    known = {cfg.col_dam, cfg.col_imb, cfg.col_res, cfg.col_load, cfg.col_stab, cfg.col_curt, *cfg.ida_cols,
+             *ALL_STAGE_COLS}
     for c in df.columns:
         if c not in known:
             f[f"x_{c}"] = df[c].values
@@ -292,4 +314,7 @@ def build_features(
         if "curt_given_stab_m28" in f:
             f[P_CURT] = np.nan  # = stab_prob * P(περικοπή | πλεόνασμα)
             feats += [P_CURT]
+    if cfg.target_hours is not None:
+        h0, h1 = cfg.target_hours
+        f = f[(f["hour"] >= h0) & (f["hour"] < h1)]
     return f, feats, stab_feats

@@ -15,6 +15,8 @@ API (επαληθευμένο):
     -> stability = max(0, -Energy Surplus) σε MW. Για την D είναι άγνωστο πριν τη DAM (προβλέπεται),
        αλλά το ιστορικό έως και την D-1 είναι γνωστό.
   * IMBABE (εβδομαδιαίο, Πέμπτη για προηγ. Δευ–Κυρ): Imbalance Price, Curt_Flag, απόκλιση συστήματος, mFRR.
+  * ISP2ISPResults (D ~00:25, όλη η ημέρα) / ISP3ISPResults (D ~12:25, 12:00-24:00): για πρόβλεψη
+    ίδιας ημέρας -> stab_isp2/res_isp2/load_isp2 και stab_isp3/res_isp3/load_isp3.
 
 Έξοδοι:
   * admie.csv:       timestamp, load_forecast, res_forecast, stability, imbalance, curt_flag  (για το μοντέλο)
@@ -44,8 +46,15 @@ SOURCES: dict[str, dict] = {
     "res_forecast": {"category": "ISP1DayAheadRESForecast", "parser": "forecast", "version": "pre_dam"},
     "isp1": {"category": "ISP1ISPResults", "parser": "isp_results", "version": "latest"},
     "imbabe": {"category": "IMBABE", "parser": "imbabe", "version": "latest"},
+    # Ενδοημερήσια στάδια (πρόβλεψη ίδιας ημέρας): ISP2 ~00:25 της D (όλη η ημέρα),
+    # ISP3 ~12:25 της D (μόνο 12:00-24:00). Στήλες με κατάληξη _isp2 / _isp3.
+    "isp2": {"category": "ISP2ISPResults", "parser": "isp_results", "version": "latest", "suffix": "isp2"},
+    "isp3": {"category": "ISP3ISPResults", "parser": "isp_results", "version": "latest", "suffix": "isp3"},
 }
-MODEL_COLS = ["load_forecast", "res_forecast", "stability", "imbalance", "curt_flag"]
+# ISP2/ISP3: στήλες μοντέλου (πλεόνασμα, ΑΠΕ και φορτίο του ISP)
+STAGE_RENAME = {"stability": "stab", "isp_renewables": "res", "isp_load": "load"}
+MODEL_COLS = ["load_forecast", "res_forecast", "stability", "imbalance", "curt_flag",
+              "stab_isp2", "res_isp2", "load_isp2", "stab_isp3", "res_isp3", "load_isp3"]
 
 
 # ---------------------------------------------------------------- HTTP
@@ -205,6 +214,7 @@ def parse_isp_results(path: Path, day: pd.Timestamp, tz: str = TZ) -> pd.DataFra
     sh = pd.read_excel(path, sheet_name=0, header=None)
     out = {}
     ts_cols: list[int] = []
+    first_stamps = None
     for _, row in sh.iterrows():
         lab = row.iloc[0]
         if not isinstance(lab, str):
@@ -214,6 +224,8 @@ def parse_isp_results(path: Path, day: pd.Timestamp, tz: str = TZ) -> pd.DataFra
                                 format="%Y-%m-%d %H:%M:%S")
         if stamps.notna().sum() >= 20:
             ts_cols = [j + 1 for j in np.flatnonzero(stamps.notna().values)]
+            if first_stamps is None:
+                first_stamps = pd.DatetimeIndex(stamps.dropna().values)
             continue
         for key, want in ISP_ROWS.items():
             if key in out or lab.strip() != want or not ts_cols:
@@ -224,7 +236,11 @@ def parse_isp_results(path: Path, day: pd.Timestamp, tz: str = TZ) -> pd.DataFra
     if not out:
         return None
     n = max(len(v) for v in out.values())
-    idx = _day_index(day, n, tz)
+    starts_midnight = first_stamps is None or (first_stamps[0].hour == 0 and first_stamps[0].minute == 0)
+    idx = _day_index(day, n, tz) if starts_midnight else None
+    if idx is None and first_stamps is not None and len(first_stamps) == n:
+        # μερική ημέρα (π.χ. ISP3: 12:00-24:00) -> ώρες της επικεφαλίδας (ώρα αγοράς)
+        idx = first_stamps.tz_localize(tz, ambiguous="infer", nonexistent="shift_forward")
     if idx is None:
         return None
     df = pd.DataFrame({k: v for k, v in out.items() if len(v) == n}, index=idx)
@@ -314,6 +330,10 @@ def fetch_admie(start, end, out_csv="data/admie.csv", raw_dir="data/raw/admie", 
               + (f", {len(late)} χωρίς έκδοση πριν τη DAM" if late else ""))
         if parts:
             d = pd.concat(parts)
+            if src.get("suffix"):
+                sfx = src["suffix"]
+                d = d.rename(columns=lambda c: f"{STAGE_RENAME[c]}_{sfx}" if c in STAGE_RENAME
+                             else f"{sfx}_{c.removeprefix('isp_')}")
             frames.append(d[~d.index.duplicated(keep="last")])
     if not frames:
         raise RuntimeError("Δεν ανακτήθηκαν δεδομένα.")

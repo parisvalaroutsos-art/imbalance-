@@ -112,3 +112,41 @@ def test_backtest_and_forecast(data):
     df_live.loc[df_live.index >= pd.Timestamp("2025-10-15", tz=cfg.tz), "imbalance"] = np.nan
     out = forecast(df_live, cfg, "2025-10-31")
     assert out.attrs["imbalance_known_through"] == "2025-10-14"
+
+
+def _with_stage_cols(df, cfg):
+    d = df.copy()
+    d["stab_isp2"] = d["stability"] * 1.1
+    d["res_isp2"] = d["res_forecast"] * 1.05
+    d["load_isp2"] = d["load_forecast"]
+    pm = d.index.tz_convert(cfg.tz).hour >= 12
+    for c in ("stab", "res", "load"):
+        d[f"{c}_isp3"] = d[f"{c}_isp2"].where(pm)
+    return d
+
+
+def test_stage_columns_never_leak_pre_dam(data):
+    """Τα ISP2/ISP3 της ίδιας ημέρας δεν είναι γνωστά πριν τη DAM -> κανένα feature από αυτά."""
+    cfg, df = data
+    _, feats, _ = build_features(_with_stage_cols(df, cfg), cfg)
+    assert not any("isp2" in c or "isp3" in c or c.startswith("sd_") for c in feats)
+
+
+def test_stage_isp2_isp3(data):
+    from imbalance_forecast.config import stage_config
+
+    cfg, df = data
+    d = _with_stage_cols(df, cfg)
+    c2 = stage_config("isp2", gbm_params=FAST, train_window_days=120, min_train_days=40)
+    assert c2.issue_lead_days == 0 and c2.ida_available == ("ida1", "ida2")
+    f2, feats2, _ = build_features(d, c2)
+    assert {"sd_stab_isp2", "sd_stability", "sd_res_rev_isp2", "ida2"} <= set(feats2)
+    assert "sd_stab_isp3" not in feats2 and "ida3" not in feats2
+
+    c3 = stage_config("isp3", gbm_params=FAST, train_window_days=120, min_train_days=40)
+    f3, feats3, _ = build_features(d, c3)
+    assert {"sd_stab_isp3", "ida3"} <= set(feats3)
+    assert f3["hour"].min() == 12  # μόνο 12:00-24:00
+    res = backtest(d, c3, "2025-10-01", "2025-10-20", verbose=False)
+    assert len(res) and (res.index.tz_convert(cfg.tz).hour >= 12).all()
+    assert res["p_spike_up"].between(0, 1).all()

@@ -22,6 +22,12 @@ class Config:
     # (δική σας εκτίμηση ή πραγματική) και δίνεται στη στήλη `dam`.
     # Ελλάδα (CRIDA): IDA1 D-1 απόγευμα, IDA2 D-1 βράδυ, IDA3 ημέρα D (μόνο μέρος της ημέρας).
     ida_available: tuple[str, ...] = ()
+    # Στάδιο πρόβλεψης (βλ. STAGES): pre_dam | isp2 | isp3. Ορίζει τι είναι γνωστό στο issue.
+    stage: str = "pre_dam"
+    # Στήλες γνωστές για την ίδια την ημέρα-στόχο στο issue (πέρα από πρόβλεψη ΑΠΕ/φορτίου, DAM, IDA)
+    same_day_cols: tuple[str, ...] = ()
+    # Ώρες (αγοράς) που προβλέπονται, [από, έως). None = όλη η ημέρα.
+    target_hours: tuple[int, int] | None = None
 
     # --- Καθυστέρηση δημοσίευσης imbalance ---
     # Τα imbalance δημοσιεύονται Πέμπτη (weekday=3) για την προηγούμενη Δευτέρα-Κυριακή.
@@ -74,4 +80,30 @@ class Config:
     # Σημειακή πρόβλεψη imbalance (imb_point): DAM, εκτός αν p_curt >= κατώφλι -> κατώτατο όριο
     # (ελάχιστο imbalance τελευταίων 28 γνωστών ημερών). Backtest 11/2025-11/2026: MAE 84,3 έναντι 87,0 της DAM.
     point_curt_threshold: float = 0.4
+    # Ανοδικό σπάικ: imbalance > DAM + spike_up (€/MWh) -> πιθανότητα p_spike_up
+    spike_up: float = 100.0
     stab_cv_folds: int = 4  # cross-fitting για out-of-fold stab_prob στην εκπαίδευση
+
+
+# Στάδια πρόβλεψης. Ώρες δημοσίευσης (ώρα Ελλάδας, περίπου):
+#   pre_dam: D-1 πρωί, πριν τη DAM. Πρόβλεψη ΑΔΜΗΕ ISP1 (ΑΠΕ/φορτίο). Ευστάθεια της D προβλέπεται.
+#   isp2:    D ~00:30. + IDA1 (D-1 απόγ.), IDA2 (D-1 βράδυ), ISP1 αποτελέσματα της D (D-1 ~18:45),
+#            ISP2 αποτελέσματα της D (D ~00:25): πλεόνασμα/ΑΠΕ/φορτίο όλης της ημέρας.
+#   isp3:    D ~12:30. + IDA3 (D ~10:00) και ISP3 (D ~12:25), μόνο για 12:00-24:00 CET.
+STAGE_COLS_ISP2 = ("stability", "stab_isp2", "res_isp2", "load_isp2")
+STAGE_COLS_ISP3 = ("stab_isp3", "res_isp3", "load_isp3")
+STAGES: dict[str, dict] = {
+    "pre_dam": dict(issue_lead_days=1, ida_available=(), same_day_cols=(), target_hours=None),
+    "isp2": dict(issue_lead_days=0, ida_available=("ida1", "ida2"), same_day_cols=STAGE_COLS_ISP2,
+                 target_hours=None),
+    "isp3": dict(issue_lead_days=0, ida_available=("ida1", "ida2", "ida3"),
+                 same_day_cols=STAGE_COLS_ISP2 + STAGE_COLS_ISP3, target_hours=(12, 24)),
+}
+ALL_STAGE_COLS = STAGE_COLS_ISP2 + STAGE_COLS_ISP3
+
+
+def stage_config(stage: str = "pre_dam", **overrides) -> Config:
+    """Config με τις προεπιλογές του σταδίου (τα overrides υπερισχύουν)."""
+    if stage not in STAGES:
+        raise ValueError(f"Άγνωστο στάδιο {stage!r}: {list(STAGES)}")
+    return Config(**{**STAGES[stage], "stage": stage, **overrides})

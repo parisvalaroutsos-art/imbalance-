@@ -130,6 +130,20 @@ def stability_report(res: pd.DataFrame) -> pd.DataFrame | None:
     return out
 
 
+def spike_report(res: pd.DataFrame, spike_up: float = 100.0) -> pd.DataFrame | None:
+    """Βαθμονόμηση p_spike_up: πραγματική συχνότητα ανοδικού σπάικ ανά κλάση πιθανότητας."""
+    if "p_spike_up" not in res or res["p_spike_up"].isna().all():
+        return None
+    r = res.dropna(subset=["spread", "p_spike_up"])
+    spike = r["spread"] > spike_up
+    bins = pd.cut(r["p_spike_up"], [0, 0.1, 0.2, 0.3, 0.5, 1.0], include_lowest=True)
+    g = pd.DataFrame({"spike": spike, "spread": r["spread"], "b": bins}).groupby("b", observed=True)
+    out = pd.DataFrame({"n_15min": g.size(), "p_pred": r.groupby(bins, observed=True)["p_spike_up"].mean(),
+                        "spike_actual": g["spike"].mean(), "spread_mean": g["spread"].mean()})
+    out.index.name = "p_spike_up"
+    return out
+
+
 def forecast(df: pd.DataFrame, cfg: Config, target_date, issue_date=None) -> pd.DataFrame:
     """Πρόβλεψη για την ημέρα target_date (τοπική) με ό,τι είναι γνωστό στο issue.
 
