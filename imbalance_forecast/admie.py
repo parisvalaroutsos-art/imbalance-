@@ -287,7 +287,8 @@ def _merge_csv(df: pd.DataFrame, path: Path, tz: str) -> pd.DataFrame:
     if path.exists():
         old = pd.read_csv(path)
         old.index = pd.to_datetime(old.pop(old.columns[0]), utc=True).dt.tz_convert(tz)
-        df = df.combine_first(old)
+        cols = list(old.columns) + [c for c in df.columns if c not in old.columns]
+        df = df.combine_first(old)[cols]  # σταθερή σειρά στηλών -> μικρά diffs στο git
     df = df.sort_index()
     df.index.name = "timestamp"
     path.parent.mkdir(parents=True, exist_ok=True)
