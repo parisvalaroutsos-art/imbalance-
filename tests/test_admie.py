@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from imbalance_forecast.admie import parse_forecast, parse_imbabe, parse_isp_results, select_versions
+from imbalance_forecast.admie import parse_forecast, parse_imbabe, parse_isp_results, parse_unit_avail, select_versions
 
 FX = Path(__file__).parent / "fixtures"
 DAY = pd.Timestamp("2026-11-20")
@@ -78,3 +78,11 @@ def test_parse_isp3_half_day():
     assert str(df.index[0]) == "2026-11-20 12:00:00+01:00"
     assert str(df.index[-1]) == "2026-11-20 23:45:00+01:00"
     assert df["isp_renewables"].iloc[0] == 9317
+
+
+def test_parse_unit_avail():
+    df = parse_unit_avail(FX / "20261120_ISP1UnitAvailabilities_02.xlsx", DAY)
+    assert len(df) == 96 and (df.nunique() == 1).all()  # ημερήσια μεγέθη σε κάθε 15λεπτο
+    r = df.iloc[0]
+    assert r["ua_thermal"] == 5192 and r["ua_hydro"] == pytest.approx(2585.6)
+    assert r["ua_n_forced"] == 1  # MEGALOPOLI4: Major Outage

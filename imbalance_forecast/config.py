@@ -93,22 +93,30 @@ class Config:
 #   isp2:    D ~00:30. + IDA1 (D-1 απόγ.), IDA2 (D-1 βράδυ), ISP1 αποτελέσματα της D (D-1 ~18:45),
 #            ISP2 αποτελέσματα της D (D ~00:25): πλεόνασμα/ΑΠΕ/φορτίο όλης της ημέρας.
 #   isp3:    D ~12:30. + IDA3 (D ~10:00) και ISP3 (D ~12:25), μόνο για 12:00-24:00 CET.
+_UA = ("thermal", "hydro", "n_out", "n_forced")
+UA1 = tuple(f"ua1_{f}" for f in _UA)  # διαθεσιμότητα μονάδων ISP1: D-1 ~09:40 (πριν τη DAM)
+UA2 = tuple(f"ua2_{f}" for f in _UA)  # ISP2: D-1 ~21:10
+UA3 = tuple(f"ua3_{f}" for f in _UA)  # ISP3: D ~09:10
 STAGE_COLS_ISP2 = ("stability", "stab_isp2", "res_isp2", "load_isp2")
 STAGE_COLS_ISP3 = ("stab_isp3", "res_isp3", "load_isp3")
 STAGES: dict[str, dict] = {
-    "pre_dam": dict(issue_lead_days=1, ida_available=(), same_day_cols=(), target_hours=None),
-    "isp1": dict(issue_lead_days=1, ida_available=("ida1",), same_day_cols=("stability",), target_hours=None,
-                 point_mode="floor"),
-    "isp2": dict(issue_lead_days=0, ida_available=("ida1", "ida2"), same_day_cols=STAGE_COLS_ISP2,
+    "pre_dam": dict(issue_lead_days=1, ida_available=(), same_day_cols=UA1, target_hours=None),
+    "isp1": dict(issue_lead_days=1, ida_available=("ida1",), same_day_cols=("stability",) + UA1,
+                 target_hours=None, point_mode="floor"),
+    "isp2": dict(issue_lead_days=0, ida_available=("ida1", "ida2"), same_day_cols=STAGE_COLS_ISP2 + UA1 + UA2,
                  target_hours=None, point_mode="q50"),
     "isp3": dict(issue_lead_days=0, ida_available=("ida1", "ida2", "ida3"),
-                 same_day_cols=STAGE_COLS_ISP2 + STAGE_COLS_ISP3, target_hours=(12, 24), point_mode="q50"),
+                 same_day_cols=STAGE_COLS_ISP2 + STAGE_COLS_ISP3 + UA1 + UA2 + UA3, target_hours=(12, 24),
+                 point_mode="q50"),
 }
-ALL_STAGE_COLS = STAGE_COLS_ISP2 + STAGE_COLS_ISP3
+ALL_STAGE_COLS = STAGE_COLS_ISP2 + STAGE_COLS_ISP3 + UA1 + UA2 + UA3
 
 
 def stage_config(stage: str = "pre_dam", **overrides) -> Config:
     """Config με τις προεπιλογές του σταδίου (τα overrides υπερισχύουν)."""
     if stage not in STAGES:
         raise ValueError(f"Άγνωστο στάδιο {stage!r}: {list(STAGES)}")
-    return Config(**{**STAGES[stage], "stage": stage, **overrides})
+    base = dict(STAGES[stage])
+    if not overrides.pop("use_unit_avail", True):  # σύγκριση χωρίς διαθεσιμότητα μονάδων
+        base["same_day_cols"] = tuple(c for c in base["same_day_cols"] if not c.startswith("ua"))
+    return Config(**{**base, "stage": stage, **overrides})

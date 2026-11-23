@@ -118,6 +118,22 @@ def _add_exog(f: pd.DataFrame, df: pd.DataFrame, cfg: Config) -> list[str]:
                 f[f"sd_res_rev_{sfx}"] = f[f"sd_{r}"] - f["res"]
                 cols.append(f"sd_res_rev_{sfx}")
 
+    # διαθεσιμότητα μονάδων: η πιο πρόσφατη γνωστή έκδοση (ISP3 > ISP2 > ISP1)
+    ua = [k for k in ("ua3", "ua2", "ua1") if f"{k}_thermal" in cfg.same_day_cols and f"{k}_thermal" in df]
+    if ua:
+        k = ua[0]
+        avail = df[f"{k}_thermal"].fillna(0) + df[f"{k}_hydro"].fillna(0)
+        f["ua_avail"] = avail.where(df[f"{k}_thermal"].notna()).values
+        cols.append("ua_avail")
+        if "resid_load" in f:  # περιθώριο: διαθέσιμη ελεγχόμενη ισχύς - καθαρό φορτίο
+            f["ua_margin"] = f["ua_avail"] - f["resid_load"]
+            f["ua_margin_dmin"] = f.groupby("date")["ua_margin"].transform("min")
+            cols += ["ua_margin", "ua_margin_dmin"]
+        if k != "ua1" and "ua1_thermal" in df:  # νέες απώλειες μετά το ISP1
+            f["ua_rev"] = (df[f"{k}_thermal"] - df["ua1_thermal"]).values
+            f["ua_forced_rev"] = (df[f"{k}_n_forced"] - df["ua1_n_forced"]).values
+            cols += ["ua_rev", "ua_forced_rev"]
+
     # επιπλέον στήλες χρήστη (πρέπει να είναι γνωστές στο issue, π.χ. προβλέψεις)
     known = {cfg.col_dam, cfg.col_imb, cfg.col_res, cfg.col_load, cfg.col_stab, cfg.col_curt, *cfg.ida_cols,
              *ALL_STAGE_COLS}
@@ -264,6 +280,7 @@ def build_features(
     cal_cols = ["hour", "qh", "dow", "month", "doy_sin", "doy_cos", "holiday", "offday"]
 
     exog_cols = _add_exog(f, df, cfg)
+    f = f.copy()  # συμπαγές DataFrame μετά από πολλές προσθήκες στηλών
     if "dam" not in f:
         f["dam"] = df[cfg.col_dam].values if cfg.col_dam in df else np.nan
 

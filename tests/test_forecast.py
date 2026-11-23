@@ -122,14 +122,33 @@ def _with_stage_cols(df, cfg):
     pm = d.index.tz_convert(cfg.tz).hour >= 12
     for c in ("stab", "res", "load"):
         d[f"{c}_isp3"] = d[f"{c}_isp2"].where(pm)
+    for k, mw in (("ua1", 6000.0), ("ua2", 5800.0), ("ua3", 5500.0)):
+        d[f"{k}_thermal"], d[f"{k}_hydro"], d[f"{k}_n_out"], d[f"{k}_n_forced"] = mw, 2000.0, 5.0, 1.0
     return d
+
+
+def test_unit_availability_by_stage(data):
+    """Διαθεσιμότητα μονάδων: πριν τη DAM μόνο ISP1· ISP3 μόνο στο στάδιο isp3."""
+    from imbalance_forecast.config import stage_config
+
+    cfg, df = data
+    d = _with_stage_cols(df, cfg)
+    f0, feats0, _ = build_features(d, stage_config("pre_dam"))
+    assert "ua_margin" in feats0 and "sd_ua1_thermal" in feats0 and "ua_rev" not in feats0
+    assert not any(c.startswith(("sd_ua2", "sd_ua3", "x_ua")) for c in feats0)
+    assert (f0["ua_avail"] == 8000).all()
+    f3, feats3, _ = build_features(d, stage_config("isp3"))
+    assert (f3["ua_avail"] == 7500).all() and (f3["ua_rev"] == -500).all()
+    _, feats_nu, _ = build_features(d, stage_config("isp3", use_unit_avail=False))
+    assert not any("ua" in c.split("_")[0] or c.startswith("sd_ua") for c in feats_nu)
 
 
 def test_stage_columns_never_leak_pre_dam(data):
     """Τα ISP2/ISP3 της ίδιας ημέρας δεν είναι γνωστά πριν τη DAM -> κανένα feature από αυτά."""
     cfg, df = data
     _, feats, _ = build_features(_with_stage_cols(df, cfg), cfg)
-    assert not any("isp2" in c or "isp3" in c or c.startswith("sd_") for c in feats)
+    assert not any("isp2" in c or "isp3" in c for c in feats)
+    assert not any(c.startswith("sd_") and not c.startswith("sd_ua1") for c in feats)  # μόνο ISP1 διαθεσιμότητα
 
 
 def test_stage_isp2_isp3(data):

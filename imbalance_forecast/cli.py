@@ -27,6 +27,7 @@ def _cfg(a) -> Config:
     return stage_config(
         a.stage,
         **over,
+        use_unit_avail=not a.no_units,
         target=a.target,
         pub_available_same_day=a.pub_same_day,
         train_window_days=a.window,
@@ -38,6 +39,7 @@ def _cfg(a) -> Config:
 def _common(p):
     p.add_argument("--stage", choices=list(STAGES), default="pre_dam",
                    help="pre_dam: D-1 πριν τη DAM | isp2: D ~00:30 (IDA1-2, ISP1-2) | isp3: D ~12:30 (IDA3, ISP3, 12-24h)")
+    p.add_argument("--no-units", action="store_true", help="χωρίς διαθεσιμότητα μονάδων (για σύγκριση)")
     p.add_argument("--target", choices=["spread", "imbalance"], default="spread")
     p.add_argument("--lead", type=int, default=None, help="ημέρες πριν την ημέρα-στόχο (προεπιλογή: από το στάδιο)")
     p.add_argument("--ida", nargs="*", default=None, help="διαθέσιμες IDA στο issue (προεπιλογή: από το στάδιο)")
@@ -103,7 +105,7 @@ def main(argv=None):
     g.add_argument("--end", default=str((pd.Timestamp.today().normalize() + pd.Timedelta(days=1)).date()))
     g.add_argument("--out", default="data/admie.csv")
     g.add_argument("--raw-dir", default="data/raw/admie")
-    g.add_argument("--only", nargs="*", help="μόνο αυτές οι πηγές: load_forecast res_forecast isp1 imbabe isp2 isp3")
+    g.add_argument("--only", nargs="*", help="μόνο αυτές οι πηγές: load_forecast res_forecast isp1 imbabe isp2 isp3 ua1 ua2 ua3")
     g.add_argument("--sleep", type=float, default=1.0, help="παύση (s) ανάμεσα στα αιτήματα")
     g.add_argument("--dam-gate", default="12:00", help="ώρα (τοπική, D-1) πριν την οποία πρέπει να έχει βγει η πρόβλεψη")
 

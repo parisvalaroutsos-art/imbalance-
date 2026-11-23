@@ -50,11 +50,17 @@ SOURCES: dict[str, dict] = {
     # ISP3 ~12:25 της D (μόνο 12:00-24:00). Στήλες με κατάληξη _isp2 / _isp3.
     "isp2": {"category": "ISP2ISPResults", "parser": "isp_results", "version": "latest", "suffix": "isp2"},
     "isp3": {"category": "ISP3ISPResults", "parser": "isp_results", "version": "latest", "suffix": "isp3"},
+    # Διαθεσιμότητα μονάδων: ISP1 (D-1 ~09:40, πριν τη DAM), ISP2 (D-1 ~21:10), ISP3 (D ~09:10)
+    "ua1": {"category": "ISP1UnitAvailabilities", "parser": "unit_avail", "version": "pre_dam", "prefix": "ua1"},
+    "ua2": {"category": "ISP2UnitAvailabilities", "parser": "unit_avail", "version": "latest", "prefix": "ua2"},
+    "ua3": {"category": "ISP3UnitAvailabilities", "parser": "unit_avail", "version": "latest", "prefix": "ua3"},
 }
+UA_FIELDS = ("thermal", "hydro", "n_out", "n_forced")
+UA_COLS = tuple(f"ua{i}_{f}" for i in (1, 2, 3) for f in UA_FIELDS)
 # ISP2/ISP3: στήλες μοντέλου (πλεόνασμα, ΑΠΕ και φορτίο του ISP)
 STAGE_RENAME = {"stability": "stab", "isp_renewables": "res", "isp_load": "load"}
 MODEL_COLS = ["load_forecast", "res_forecast", "stability", "imbalance", "curt_flag",
-              "stab_isp2", "res_isp2", "load_isp2", "stab_isp3", "res_isp3", "load_isp3"]
+              "stab_isp2", "res_isp2", "load_isp2", "stab_isp3", "res_isp3", "load_isp3", *UA_COLS]
 
 
 # ---------------------------------------------------------------- HTTP
@@ -279,7 +285,42 @@ def parse_imbabe(path: Path, day=None, tz: str = TZ) -> pd.DataFrame | None:
     return out
 
 
-PARSERS = {"forecast": parse_forecast, "isp_results": parse_isp_results, "imbabe": parse_imbabe}
+HYDRO_RX = re.compile(
+    r"KREMASTA|KASTRAKI|STRATOS|ILARIONAS|POLYFYTO|SFIKIA|ASOMATA|THESAVROS|PLATANOVRYSI|POURNARI|P_AOOU|"
+    r"LADONAS|PLASTIRAS|EDESSAIOS|AGRAS|MESOCHORA|GIONA|PIGES|AOOS|MAKROCHORI|GKIOFYRI", re.I)
+FORCED_RX = re.compile(r"major outage|forced|fault|damage|tripp|βλάβη|unplanned", re.I)
+
+
+def parse_unit_avail(path: Path, day: pd.Timestamp, tz: str = TZ) -> pd.DataFrame | None:
+    """ISPxUnitAvailabilities: διαθεσιμότητα ανά μονάδα για την ημέρα D -> ημερήσια μεγέθη σε κάθε 15λεπτο.
+
+    ua_thermal / ua_hydro: εκτιμώμενη μέγιστη διαθέσιμη ισχύς (MW) για τη D,
+    ua_n_out: μονάδες με 0 MW, ua_n_forced: μονάδες με βλάβη (π.χ. «Major Outage»).
+    """
+    sh = pd.read_excel(path, sheet_name=0, header=None)
+    rows = []
+    for _, r in sh.iterrows():
+        if not _is_num(r.iloc[0]) or not isinstance(r.iloc[1], str):
+            continue
+        est = pd.to_numeric(r.iloc[3], errors="coerce") if len(r) > 3 else np.nan
+        com = str(r.iloc[4]) if len(r) > 4 and pd.notna(r.iloc[4]) else ""
+        rows.append((r.iloc[1].strip(), est, com))
+    if not rows:
+        return None
+    u = pd.DataFrame(rows, columns=["unit", "mw", "comment"])
+    hyd = u["unit"].str.contains(HYDRO_RX)
+    vals = {
+        "ua_thermal": u.loc[~hyd, "mw"].sum(),
+        "ua_hydro": u.loc[hyd, "mw"].sum(),
+        "ua_n_out": int((u.loc[~hyd, "mw"].fillna(0) <= 0).sum()),
+        "ua_n_forced": int(u["comment"].str.contains(FORCED_RX).sum()),
+    }
+    idx = _day_index(day, _hours(day, tz) * 4, tz)
+    return pd.DataFrame({k: float(v) for k, v in vals.items()}, index=idx)
+
+
+PARSERS = {"forecast": parse_forecast, "isp_results": parse_isp_results, "imbabe": parse_imbabe,
+           "unit_avail": parse_unit_avail}
 
 
 # ---------------------------------------------------------------- κύρια ροή
@@ -331,6 +372,8 @@ def fetch_admie(start, end, out_csv="data/admie.csv", raw_dir="data/raw/admie", 
               + (f", {len(late)} χωρίς έκδοση πριν τη DAM" if late else ""))
         if parts:
             d = pd.concat(parts)
+            if src.get("prefix"):
+                d = d.rename(columns=lambda c: f"{src['prefix']}_{c.removeprefix('ua_')}")
             if src.get("suffix"):
                 sfx = src["suffix"]
                 d = d.rename(columns=lambda c: f"{STAGE_RENAME[c]}_{sfx}" if c in STAGE_RENAME
