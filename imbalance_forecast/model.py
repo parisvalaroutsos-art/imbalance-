@@ -119,4 +119,10 @@ class ImbalanceModel:
         p = self.clf.predict_proba(X)[:, 1] if self.clf is not None else np.full(len(X), np.nan)
         out["p_imb_gt_dam"] = p
         out["p_imb_lt_dam"] = 1 - p
+        # σημειακή πρόβλεψη: DAM, ή το τρέχον κατώτατο όριο όταν η περικοπή είναι πιθανή
+        point = pd.Series(dam, index=frame.index, dtype=float)
+        if P_CURT in out and "imb_min28" in frame:
+            hit = (out[P_CURT] >= self.cfg.point_curt_threshold) & frame["imb_min28"].notna()
+            point[hit] = np.minimum(frame.loc[hit, "imb_min28"], point[hit])
+        out["imb_point"] = point
         return out

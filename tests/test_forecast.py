@@ -94,6 +94,10 @@ def test_backtest_and_forecast(data):
     assert np.isfinite(m.loc["model_q50", "MAE"])
     assert (res["imb_q10"] <= res["imb_q90"]).all()
     assert res["stab_prob"].between(0, 1).all()
+    # σημειακή: = DAM εκτός αν p_curt >= κατώφλι, και ποτέ πάνω από τη DAM
+    assert "model_point" in m.index and (res["imb_point"] <= res["dam"] + 1e-9).all()
+    low = res["p_curt"] < cfg.point_curt_threshold
+    assert np.allclose(res.loc[low, "imb_point"], res.loc[low, "dam"])
     rep = stability_report(res)
     assert rep is not None and rep["n_15min"].sum() > 0
 

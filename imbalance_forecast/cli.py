@@ -147,7 +147,7 @@ def main(argv=None):
             f"Issue: {out.attrs['issue_date']} | imbalance γνωστό έως: {out.attrs['imbalance_known_through']}"
             f" | ευστάθεια γνωστή έως: {out.attrs['stability_known_through']}"
         )
-        cols = [c for c in ["dam", "stab_prob", "p_curt", "spread_q10", "spread_q50", "spread_q90", "imb_q50", "p_imb_lt_dam"]
+        cols = [c for c in ["dam", "stab_prob", "p_curt", "spread_q10", "spread_q50", "spread_q90", "imb_q50", "imb_point", "p_imb_lt_dam"]
                 if c in out]
         h = out[cols].groupby(out.index.hour).mean().round(2)
         h.index.name = "ώρα"

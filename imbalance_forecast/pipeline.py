@@ -76,7 +76,7 @@ def metrics(res: pd.DataFrame) -> pd.DataFrame:
     r = res.dropna(subset=["imbalance"])
     y = r["imbalance"]
     rows = {}
-    cands = {"model_q50": r["imb_q50"]} | {c: r[c] for c in r.columns if c.startswith("bl_")}
+    cands = {"model_q50": r["imb_q50"]} | ({"model_point": r["imb_point"]} if "imb_point" in r else {}) | {c: r[c] for c in r.columns if c.startswith("bl_")}
     for name, p in cands.items():
         e = y - p
         spr_hat = p - r["dam"]
