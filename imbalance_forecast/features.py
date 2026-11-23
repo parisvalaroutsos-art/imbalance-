@@ -150,6 +150,10 @@ def _imbalance_lags(f: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, list[s
     s7, n7, q7 = d["sum"].rolling(7, 1).sum(), d["count"].rolling(7, 1).sum(), d2.rolling(7, 1).sum()
     s28, n28 = d["sum"].rolling(28, 1).sum(), d["count"].rolling(28, 1).sum()
     daily = pd.DataFrame({"spr_m7": s7 / n7, "spr_sd7": np.sqrt((q7 / n7 - (s7 / n7) ** 2).clip(0)), "spr_m28": s28 / n28})
+    # τρέχον «κατώτατο» imbalance (αλλάζει με τους κανόνες της αγοράς) και χαμηλό ποσοστημόριο
+    dmin = f.groupby("date")["imbalance"].min().reindex(spr.index)
+    daily["imb_min28"] = dmin.rolling(28, 1).min()
+    daily["imb_q05_28"] = f.groupby("date")["imbalance"].quantile(0.05).reindex(spr.index).rolling(28, 1).median()
     # spread υπό συνθήκη ευστάθειας (28 ημ.): πόσο «πέφτει» το imbalance όταν ο ΑΔΜΗΕ κάνει ευστάθεια
     if STAB_FLAG in f and f[STAB_FLAG].notna().any():
         fl = f[STAB_FLAG]

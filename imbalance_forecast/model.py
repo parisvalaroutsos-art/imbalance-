@@ -45,7 +45,8 @@ class ImbalanceModel:
             fit_rows = stab_train[~stab_train["date"].isin(blk)]
             if fit_rows[STAB_FLAG].nunique() < 2:
                 continue
-            m = self._new_stab_clf().fit(fit_rows[self.stab_features], fit_rows[STAB_FLAG])
+            k = self._recent(fit_rows)
+            m = self._new_stab_clf().fit(fit_rows.loc[k, self.stab_features], fit_rows.loc[k, STAB_FLAG])
             out[in_blk] = m.predict_proba(train.loc[in_blk, self.stab_features])[:, 1]
         return out
 
@@ -53,6 +54,15 @@ class ImbalanceModel:
         if self.stab_clf is None:
             return np.full(len(frame), np.nan)
         return self.stab_clf.predict_proba(frame[self.stab_features])[:, 1]
+
+    def _recent(self, d: pd.DataFrame) -> np.ndarray:
+        """Βάρη εγγύτητας ως τυχαία υποδειγματοληψία: κάθε γραμμή κρατιέται με πιθανότητα
+        0.5^(ηλικία/half-life). Ισοδύναμο με sample_weight, αλλά πολύ ταχύτερο στο scikit-learn."""
+        hl = self.cfg.recency_halflife_days
+        if not hl:
+            return np.ones(len(d), bool)
+        age = (d["date"].max() - d["date"]).dt.days.to_numpy(dtype=float)
+        return np.random.default_rng(0).random(len(d)) < 0.5 ** (age / hl)
 
     @staticmethod
     def _add_p_curt(frame: pd.DataFrame) -> None:
@@ -66,7 +76,8 @@ class ImbalanceModel:
         if self._stab_ok(stab_train):
             st = stab_train.dropna(subset=[STAB_FLAG])
             d[STAB_PROB] = self._oof_stab(d, st)
-            self.stab_clf = self._new_stab_clf().fit(st[self.stab_features], st[STAB_FLAG])
+            k = self._recent(st)
+            self.stab_clf = self._new_stab_clf().fit(st.loc[k, self.stab_features], st.loc[k, STAB_FLAG])
         elif STAB_PROB in d:
             d[STAB_PROB] = np.nan
         self._add_p_curt(d)
@@ -75,12 +86,13 @@ class ImbalanceModel:
         y = d[TARGET]
         lo, hi = y.quantile(list(self.cfg.winsor))
         y_w = y.clip(lo, hi)
+        keep = self._recent(d)
         for q in self.cfg.quantiles:
             m = HistGradientBoostingRegressor(loss="quantile", quantile=q, **self.cfg.gbm_params)
-            self.reg[q] = m.fit(X, y_w)
+            self.reg[q] = m.fit(X[keep], y_w[keep])
         sign = (d["spread"] > 0).astype(int)
         if sign.nunique() == 2:
-            self.clf = HistGradientBoostingClassifier(**self.cfg.gbm_params).fit(X, sign)
+            self.clf = HistGradientBoostingClassifier(**self.cfg.gbm_params).fit(X[keep], sign[keep])
         return self
 
     def predict(self, frame: pd.DataFrame) -> pd.DataFrame:

@@ -39,6 +39,9 @@ class Config:
     min_train_days: int = 56
     # Στο backtest: επανεκπαίδευση κάθε N εβδομάδες (τα lag features ενημερώνονται πάντα εβδομαδιαία)
     retrain_every_weeks: int = 1
+    # Βάρη χρονικής εγγύτητας στην εκπαίδευση (half-life σε ημέρες, None = ίσα βάρη). Η αγορά αλλάζει
+    # κανόνες (π.χ. κατώτατο imbalance: χωρίς αρνητικά έως 6/2025, -50 από 7/2025, -100 από 7/2026).
+    recency_halflife_days: float | None = 60.0
     gbm_params: dict = field(
         default_factory=lambda: dict(
             max_iter=300,
