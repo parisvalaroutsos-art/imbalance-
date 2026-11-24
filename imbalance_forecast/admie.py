@@ -64,7 +64,7 @@ STAGE_RENAME = {"stability": "stab", "isp_renewables": "res", "isp_load": "load"
 MODEL_COLS = ["load_forecast", "res_forecast", "stability", "imbalance", "curt_flag",
               "stab_isp2", "res_isp2", "load_isp2", "stab_isp3", "res_isp3", "load_isp3", *UA_COLS,
               "act_isp1", "pup_isp1", "pdn_isp1", "act_isp2", "pup_isp2", "pdn_isp2",
-              "act_isp3", "pup_isp3", "pdn_isp3"]
+              "act_isp3", "pup_isp3", "pdn_isp3", "net_act"]
 
 
 # ---------------------------------------------------------------- HTTP
@@ -393,6 +393,9 @@ def fetch_admie(start, end, out_csv="data/admie.csv", raw_dir="data/raw/admie", 
     if not frames:
         raise RuntimeError("Δεν ανακτήθηκαν δεδομένα.")
     allf = pd.concat(frames, axis=1).sort_index()
+    if {"bal_energy_up", "bal_energy_down"} <= set(allf.columns):  # πραγματική καθαρή ενεργοποίηση (IMBABE)
+        ok = allf["bal_energy_up"].notna() | allf["bal_energy_down"].notna()
+        allf["net_act"] = (allf["bal_energy_up"].fillna(0) - allf["bal_energy_down"].fillna(0)).where(ok)
     model = allf[[c for c in MODEL_COLS if c in allf]]
     extra = allf[[c for c in allf.columns if c not in MODEL_COLS]]
     m = _merge_csv(model, out_csv, tz)

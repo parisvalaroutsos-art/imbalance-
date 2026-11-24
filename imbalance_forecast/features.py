@@ -23,6 +23,7 @@ TARGET = "y"
 STAB_FLAG = "stab_flag"
 STAB_PROB = "stab_prob"
 CURT = "curt"
+ISP_ERR = "isp_err"
 P_CURT = "p_curt"
 
 
@@ -152,7 +153,7 @@ def _add_exog(f: pd.DataFrame, df: pd.DataFrame, cfg: Config) -> list[str]:
 
     # επιπλέον στήλες χρήστη (πρέπει να είναι γνωστές στο issue, π.χ. προβλέψεις)
     known = {cfg.col_dam, cfg.col_imb, cfg.col_res, cfg.col_load, cfg.col_stab, cfg.col_curt, *cfg.ida_cols,
-             *ALL_STAGE_COLS}
+             *ALL_STAGE_COLS, cfg.col_net_act}
     for c in df.columns:
         if c not in known:
             f[f"x_{c}"] = df[c].values
@@ -234,6 +235,13 @@ def _imbalance_lags(f: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, list[s
             a = pd.DataFrame({"cs": (f[CURT] * f[STAB_FLAG]).where(ok), "s": f[STAB_FLAG].where(ok)})
             a = a.groupby(f["date"]).sum().reindex(spr.index).rolling(28, 1).sum()
             daily["curt_given_stab_m28"] = a["cs"] / a["s"].replace(0, np.nan)
+    # σφάλμα ISP: πραγματική - σχεδιασμένη ενεργοποίηση, ανά ώρα (MW) και ποσοστό σωστής κατεύθυνσης
+    if ISP_ERR in f and f[ISP_ERR].notna().any():
+        ep = _hourly_pivot(f, ISP_ERR).reindex(spr.index)
+        hp = _hourly_pivot(f, "isp_hit").reindex(spr.index)
+        curt_tabs["isp_err_h_m7"] = ep.rolling(7, min_periods=1).mean()
+        curt_tabs["isp_err_h_m28"] = ep.rolling(28, min_periods=3).mean()
+        curt_tabs["isp_hit_h_m28"] = hp.rolling(28, min_periods=3).mean()
     if curt_tabs:
         lag_h = lag_h.merge(_stack(curt_tabs, "cutoff"), on=["cutoff", "hour"], how="left")
     daily.index.name = "cutoff"
@@ -309,6 +317,11 @@ def build_features(
     f[TARGET] = f[SPREAD] if cfg.target == "spread" else f["imbalance"]
     if cfg.col_curt in df:
         f[CURT] = df[cfg.col_curt].values
+    # ιστορικό σφάλμα σχεδιασμένης ενεργοποίησης ISP (γνωστό μόνο έως το cutoff, όπως το imbalance)
+    if cfg.use_isp_err and cfg.col_net_act in df and "act_last" in f:
+        f[ISP_ERR] = df[cfg.col_net_act].values - f["act_last"].values
+        f["isp_hit"] = (np.sign(df[cfg.col_net_act].values) == np.sign(f["act_last"].values)).astype(float)
+        f["isp_hit"] = f["isp_hit"].where(f[ISP_ERR].notna())
     if cfg.col_stab in df:
         f["stab_mw"] = df[cfg.col_stab].values
         f[STAB_FLAG] = (f["stab_mw"] > cfg.stab_threshold).astype(float).where(f["stab_mw"].notna())

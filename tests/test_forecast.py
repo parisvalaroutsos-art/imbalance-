@@ -190,3 +190,24 @@ def test_isp_activation_by_stage(data):
     assert (f3["act_last"] == 150).all()  # 12-24: ISP3
     _, feats_no, _ = build_features(d, stage_config("isp2", use_isp_act=False))
     assert "act_last" not in feats_no
+
+
+def test_isp_error_history_no_leakage(data):
+    """Το ιστορικό σφάλμα ISP (πραγματική - σχεδιασμένη ενεργοποίηση) χρησιμοποιεί μόνο ημέρες <= cutoff."""
+    from imbalance_forecast.config import stage_config
+
+    cfg, df = data
+    d = _with_stage_cols(df, cfg)
+    d["net_act"] = d["imbalance"] / 10  # «πραγματική» ενεργοποίηση, γνωστή μαζί με το imbalance
+    c = stage_config("isp2", gbm_params=FAST, use_isp_err=True)
+    f1, feats, _ = build_features(d, c)
+    assert {"isp_err_h_m28", "isp_hit_h_m28"} <= set(feats) and "net_act" not in feats and "x_net_act" not in feats
+    day = pd.Timestamp("2025-10-21")
+    cutoff = f1.loc[f1["date"] == day, "cutoff"].iloc[0]
+    d2 = d.copy()
+    d2.loc[d2.index.tz_convert(cfg.tz).tz_localize(None) >= cutoff + pd.Timedelta(days=1), "net_act"] = 1e6
+    f2, _, _ = build_features(d2, c)
+    m = f1["date"] == day
+    pd.testing.assert_frame_equal(f1.loc[m, feats], f2.loc[m, feats])
+    _, feats_no, _ = build_features(d, stage_config("isp2"))  # προεπιλογή: χωρίς
+    assert "isp_err_h_m28" not in feats_no

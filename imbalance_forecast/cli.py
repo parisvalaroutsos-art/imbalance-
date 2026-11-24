@@ -29,6 +29,7 @@ def _cfg(a) -> Config:
         **over,
         use_unit_avail=a.units,
         use_isp_act=not a.no_isp_act,
+        use_isp_err=a.isp_err,
         target=a.target,
         pub_available_same_day=a.pub_same_day,
         train_window_days=a.window,
@@ -44,6 +45,8 @@ def _common(p):
                    help="με διαθεσιμότητα μονάδων ΑΔΜΗΕ (δεν βελτίωσε το backtest, εκτός ως προεπιλογή)")
     p.add_argument("--no-isp-act", action="store_true",
                    help="χωρίς σχεδιασμένη ενεργοποίηση/τιμές ISP (για σύγκριση)")
+    p.add_argument("--isp-err", action="store_true",
+                   help="με ιστορικό σφάλμα ενεργοποίησης ISP (δεν βελτίωσε το backtest, εκτός ως προεπιλογή)")
     p.add_argument("--target", choices=["spread", "imbalance"], default="spread")
     p.add_argument("--lead", type=int, default=None, help="ημέρες πριν την ημέρα-στόχο (προεπιλογή: από το στάδιο)")
     p.add_argument("--ida", nargs="*", default=None, help="διαθέσιμες IDA στο issue (προεπιλογή: από το στάδιο)")

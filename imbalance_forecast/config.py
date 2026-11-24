@@ -84,6 +84,12 @@ class Config:
     point_mode: str = "floor"
     # Ανοδικό σπάικ: imbalance > DAM + spike_up (€/MWh) -> πιθανότητα p_spike_up
     spike_up: float = 100.0
+    # Πραγματική καθαρή ενεργοποίηση (IMBABE, με καθυστέρηση όπως το imbalance) -> ιστορικό σφάλμα του ISP
+    # (πραγματική - σχεδιασμένη) ανά ώρα, για τα στάδια με σχεδιασμένη ενεργοποίηση (isp1+).
+    # Εκτός ως προεπιλογή: στο backtest καμία βελτίωση. Το σφάλμα είναι συστηματικό (μεσημέρι ~-45 MW) αλλά
+    # σταθερό, οπότε το μοντέλο το μαθαίνει ήδη από ώρα + σχεδιασμένη ενεργοποίηση.
+    col_net_act: str = "net_act"
+    use_isp_err: bool = False
     stab_cv_folds: int = 4  # cross-fitting για out-of-fold stab_prob στην εκπαίδευση
 
 
