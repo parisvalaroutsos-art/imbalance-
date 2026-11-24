@@ -44,7 +44,8 @@ TZ = "Europe/Berlin"  # ώρα αγοράς (CET/CEST), βλ. config.tz
 SOURCES: dict[str, dict] = {
     "load_forecast": {"category": "ISP1DayAheadLoadForecast", "parser": "forecast", "version": "pre_dam"},
     "res_forecast": {"category": "ISP1DayAheadRESForecast", "parser": "forecast", "version": "pre_dam"},
-    "isp1": {"category": "ISP1ISPResults", "parser": "isp_results", "version": "latest"},
+    "isp1": {"category": "ISP1ISPResults", "parser": "isp_results", "version": "latest",
+             "rename": {"act": "act_isp1", "isp_price_up": "pup_isp1", "isp_price_down": "pdn_isp1"}},
     "imbabe": {"category": "IMBABE", "parser": "imbabe", "version": "latest"},
     # Ενδοημερήσια στάδια (πρόβλεψη ίδιας ημέρας): ISP2 ~00:25 της D (όλη η ημέρα),
     # ISP3 ~12:25 της D (μόνο 12:00-24:00). Στήλες με κατάληξη _isp2 / _isp3.
@@ -58,9 +59,12 @@ SOURCES: dict[str, dict] = {
 UA_FIELDS = ("thermal", "hydro", "n_out", "n_forced")
 UA_COLS = tuple(f"ua{i}_{f}" for i in (1, 2, 3) for f in UA_FIELDS)
 # ISP2/ISP3: στήλες μοντέλου (πλεόνασμα, ΑΠΕ και φορτίο του ISP)
-STAGE_RENAME = {"stability": "stab", "isp_renewables": "res", "isp_load": "load"}
+STAGE_RENAME = {"stability": "stab", "isp_renewables": "res", "isp_load": "load", "act": "act",
+                "isp_price_up": "pup", "isp_price_down": "pdn"}
 MODEL_COLS = ["load_forecast", "res_forecast", "stability", "imbalance", "curt_flag",
-              "stab_isp2", "res_isp2", "load_isp2", "stab_isp3", "res_isp3", "load_isp3", *UA_COLS]
+              "stab_isp2", "res_isp2", "load_isp2", "stab_isp3", "res_isp3", "load_isp3", *UA_COLS,
+              "act_isp1", "pup_isp1", "pdn_isp1", "act_isp2", "pup_isp2", "pdn_isp2",
+              "act_isp3", "pup_isp3", "pdn_isp3"]
 
 
 # ---------------------------------------------------------------- HTTP
@@ -212,6 +216,9 @@ ISP_ROWS = {
     "isp_price_down": "Price Energy Down",
     "isp_afrr_up": "aFRR Up",
     "isp_mfrr_up": "mFRR Up",
+    # σχεδιασμένη ενεργοποίηση εξισορρόπησης του ISP (MW)
+    "isp_cleared_up": "Cleared Energy Up",
+    "isp_cleared_down": "Cleared Energy Down",
 }
 
 
@@ -252,6 +259,8 @@ def parse_isp_results(path: Path, day: pd.Timestamp, tz: str = TZ) -> pd.DataFra
     df = pd.DataFrame({k: v for k, v in out.items() if len(v) == n}, index=idx)
     if "isp_energy_surplus" in df:
         df["stability"] = (-df["isp_energy_surplus"]).clip(lower=0) + 0.0
+    if {"isp_cleared_up", "isp_cleared_down"} <= set(df.columns):
+        df["act"] = df["isp_cleared_up"].fillna(0) - df["isp_cleared_down"].fillna(0)  # καθαρή, + = προς τα πάνω
     return df
 
 
@@ -372,6 +381,8 @@ def fetch_admie(start, end, out_csv="data/admie.csv", raw_dir="data/raw/admie", 
               + (f", {len(late)} χωρίς έκδοση πριν τη DAM" if late else ""))
         if parts:
             d = pd.concat(parts)
+            if src.get("rename"):
+                d = d.rename(columns=src["rename"])
             if src.get("prefix"):
                 d = d.rename(columns=lambda c: f"{src['prefix']}_{c.removeprefix('ua_')}")
             if src.get("suffix"):

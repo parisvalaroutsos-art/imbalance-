@@ -97,19 +97,24 @@ _UA = ("thermal", "hydro", "n_out", "n_forced")
 UA1 = tuple(f"ua1_{f}" for f in _UA)  # διαθεσιμότητα μονάδων ISP1: D-1 ~09:40 (πριν τη DAM)
 UA2 = tuple(f"ua2_{f}" for f in _UA)  # ISP2: D-1 ~21:10
 UA3 = tuple(f"ua3_{f}" for f in _UA)  # ISP3: D ~09:10
+# Σχεδιασμένη καθαρή ενεργοποίηση εξισορρόπησης (Cleared Energy Up - Down) και οριακές τιμές του ISP
+ACT1 = ("act_isp1", "pup_isp1", "pdn_isp1")  # ISP1 results: D-1 ~18:45
+ACT2 = ("act_isp2", "pup_isp2", "pdn_isp2")  # ISP2: D ~00:25
+ACT3 = ("act_isp3", "pup_isp3", "pdn_isp3")  # ISP3: D ~12:25 (12-24)
 STAGE_COLS_ISP2 = ("stability", "stab_isp2", "res_isp2", "load_isp2")
 STAGE_COLS_ISP3 = ("stab_isp3", "res_isp3", "load_isp3")
 STAGES: dict[str, dict] = {
     "pre_dam": dict(issue_lead_days=1, ida_available=(), same_day_cols=UA1, target_hours=None),
-    "isp1": dict(issue_lead_days=1, ida_available=("ida1",), same_day_cols=("stability",) + UA1,
+    "isp1": dict(issue_lead_days=1, ida_available=("ida1",), same_day_cols=("stability",) + UA1 + ACT1,
                  target_hours=None, point_mode="floor"),
-    "isp2": dict(issue_lead_days=0, ida_available=("ida1", "ida2"), same_day_cols=STAGE_COLS_ISP2 + UA1 + UA2,
+    "isp2": dict(issue_lead_days=0, ida_available=("ida1", "ida2"), same_day_cols=STAGE_COLS_ISP2 + UA1 + UA2 + ACT1 + ACT2,
                  target_hours=None, point_mode="q50"),
     "isp3": dict(issue_lead_days=0, ida_available=("ida1", "ida2", "ida3"),
-                 same_day_cols=STAGE_COLS_ISP2 + STAGE_COLS_ISP3 + UA1 + UA2 + UA3, target_hours=(12, 24),
+                 same_day_cols=STAGE_COLS_ISP2 + STAGE_COLS_ISP3 + UA1 + UA2 + UA3 + ACT1 + ACT2 + ACT3,
+                 target_hours=(12, 24),
                  point_mode="q50"),
 }
-ALL_STAGE_COLS = STAGE_COLS_ISP2 + STAGE_COLS_ISP3 + UA1 + UA2 + UA3
+ALL_STAGE_COLS = STAGE_COLS_ISP2 + STAGE_COLS_ISP3 + UA1 + UA2 + UA3 + ACT1 + ACT2 + ACT3
 
 
 def stage_config(stage: str = "pre_dam", **overrides) -> Config:
@@ -121,4 +126,6 @@ def stage_config(stage: str = "pre_dam", **overrides) -> Config:
     # χαμηλά ή υψηλά imbalance (τα σπάικ συμβαίνουν σε ώρες ΦΒ με μεγάλο περιθώριο, όχι σε έλλειψη μονάδων).
     if not overrides.pop("use_unit_avail", False):
         base["same_day_cols"] = tuple(c for c in base["same_day_cols"] if not c.startswith("ua"))
+    if not overrides.pop("use_isp_act", True):  # σύγκριση χωρίς σχεδιασμένη ενεργοποίηση ISP
+        base["same_day_cols"] = tuple(c for c in base["same_day_cols"] if c not in ACT1 + ACT2 + ACT3)
     return Config(**{**base, "stage": stage, **overrides})

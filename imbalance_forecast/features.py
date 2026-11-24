@@ -134,6 +134,20 @@ def _add_exog(f: pd.DataFrame, df: pd.DataFrame, cfg: Config) -> list[str]:
             f["ua_forced_rev"] = (df[f"{k}_n_forced"] - df["ua1_n_forced"]).values
             cols += ["ua_rev", "ua_forced_rev"]
 
+    # σχεδιασμένη ενεργοποίηση: η πιο πρόσφατη έκδοση ISP (ISP3 μόνο 12-24 -> συμπλήρωση από ISP2/ISP1)
+    acts = [f"act_isp{k}" for k in (3, 2, 1) if f"act_isp{k}" in cfg.same_day_cols and f"act_isp{k}" in df]
+    if acts:
+        last = df[acts[0]]
+        for c in acts[1:]:
+            last = last.combine_first(df[c])
+        f["act_last"] = last.values
+        f["act_up"] = (f["act_last"] > 0).astype(float).where(f["act_last"].notna())
+        cols += ["act_last", "act_up"]
+        stab_now = next((f"sd_{c}" for c in ("stab_isp3", "stab_isp2", "stability") if f"sd_{c}" in f), None)
+        if stab_now:  # ευστάθεια ΚΑΙ ενεργοποίηση προς τα πάνω: η πιο επικίνδυνη κατάσταση για σπάικ
+            f["act_up_x_stab"] = f["act_up"] * (f[stab_now] > cfg.stab_threshold)
+            cols.append("act_up_x_stab")
+
     # επιπλέον στήλες χρήστη (πρέπει να είναι γνωστές στο issue, π.χ. προβλέψεις)
     known = {cfg.col_dam, cfg.col_imb, cfg.col_res, cfg.col_load, cfg.col_stab, cfg.col_curt, *cfg.ida_cols,
              *ALL_STAGE_COLS}

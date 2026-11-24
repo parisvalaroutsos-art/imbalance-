@@ -122,6 +122,9 @@ def _with_stage_cols(df, cfg):
     pm = d.index.tz_convert(cfg.tz).hour >= 12
     for c in ("stab", "res", "load"):
         d[f"{c}_isp3"] = d[f"{c}_isp2"].where(pm)
+    for k in (1, 2, 3):
+        d[f"act_isp{k}"], d[f"pup_isp{k}"], d[f"pdn_isp{k}"] = 50.0 * k, 200.0, 0.0
+    d["act_isp3"] = d["act_isp3"].where(pm)
     for k, mw in (("ua1", 6000.0), ("ua2", 5800.0), ("ua3", 5500.0)):
         d[f"{k}_thermal"], d[f"{k}_hydro"], d[f"{k}_n_out"], d[f"{k}_n_forced"] = mw, 2000.0, 5.0, 1.0
     return d
@@ -170,3 +173,20 @@ def test_stage_isp2_isp3(data):
     assert len(res) and (res.index.tz_convert(cfg.tz).hour >= 12).all()
     assert res["p_spike_up"].between(0, 1).all()
     assert np.allclose(res["imb_point"], res["imb_q50"])  # ίδια ημέρα: σημειακή = διάμεσος
+
+
+def test_isp_activation_by_stage(data):
+    """Σχεδιασμένη ενεργοποίηση ISP: όχι πριν τη DAM· στο isp3 η πιο πρόσφατη (ISP3, αλλιώς ISP2)."""
+    from imbalance_forecast.config import stage_config
+
+    cfg, df = data
+    d = _with_stage_cols(df, cfg)
+    _, feats0, _ = build_features(d, stage_config("pre_dam"))
+    assert not any("act" in c or "pup" in c or "pdn" in c for c in feats0)
+    f1, feats1, _ = build_features(d, stage_config("isp1"))
+    assert {"act_last", "act_up_x_stab", "sd_act_isp1"} <= set(feats1) and "sd_act_isp2" not in feats1
+    assert (f1["act_last"] == 50).all()
+    f3, _, _ = build_features(d, stage_config("isp3"))
+    assert (f3["act_last"] == 150).all()  # 12-24: ISP3
+    _, feats_no, _ = build_features(d, stage_config("isp2", use_isp_act=False))
+    assert "act_last" not in feats_no
