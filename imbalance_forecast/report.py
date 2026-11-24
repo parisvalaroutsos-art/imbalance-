@@ -1,5 +1,5 @@
 """Αναφορά πρόβλεψης για αποστολή (π.χ. email): έλεγχος διαθεσιμότητας δεδομένων και ωριαίος πίνακας
-σε ώρα Ελλάδας."""
+σε ώρα αγοράς CET (όπως τα αρχεία ΑΔΜΗΕ/ΕΧΕ)."""
 from __future__ import annotations
 
 import html
@@ -8,7 +8,7 @@ import pandas as pd
 
 from .config import Config
 
-LOCAL_TZ = "Europe/Athens"
+LOCAL_TZ = "Europe/Berlin"  # ώρα αγοράς CET/CEST, όπως στα αρχεία ΑΔΜΗΕ
 
 # Τι πρέπει να έχει δημοσιευθεί για την ημέρα-στόχο D σε κάθε στάδιο (στήλη: ελάχιστα μη κενά 15λεπτα)
 REQUIRED = {
@@ -21,7 +21,7 @@ STAGE_TITLE = {
     "pre_dam": "Πριν τη DAM / μετά τη DAM",
     "isp1": "Μετά τα αποτελέσματα ISP1 (D-1 βράδυ)",
     "isp2": "Μετά το ISP2 (D ~00:30)",
-    "isp3": "Μετά το ISP3 (D ~12:30, ώρες 13-01 Ελλάδας)",
+    "isp3": "Μετά το ISP3 (D ~12:30, ώρες 12-24 CET)",
 }
 COLS = [
     ("dam", "DAM", "{:.1f}"),
@@ -50,7 +50,7 @@ def missing(df: pd.DataFrame, stage: str, target_date, tz: str) -> dict[str, int
 
 
 def hourly_table(out: pd.DataFrame) -> pd.DataFrame:
-    """Ωριαίοι μέσοι όροι σε ώρα Ελλάδας (στήλη «ώρα» = έναρξη ώρας)."""
+    """Ωριαίοι μέσοι όροι σε ώρα αγοράς CET (στήλη «ώρα» = έναρξη ώρας)."""
     cols = [c for c, _, _ in COLS if c in out]
     loc = out.index.tz_convert(LOCAL_TZ)
     h = out[cols].groupby(loc.floor("h")).mean()
@@ -97,7 +97,7 @@ def to_html(out: pd.DataFrame, cfg: Config, target_date, run_label: str, notes: 
 <h3 style="margin:0 0 4px">Πρόβλεψη imbalance {d:%d/%m/%Y} — {html.escape(run_label)}</h3>
 <p style="margin:0 0 8px;color:#555">{html.escape(STAGE_TITLE.get(cfg.stage, cfg.stage))}. {html.escape(info)}</p>
 <table style="border-collapse:collapse;font-size:12px">
-<tr><th style='padding:4px 8px;border-bottom:2px solid #555'>Ώρα Ελλάδας</th>{th}</tr>
+<tr><th style='padding:4px 8px;border-bottom:2px solid #555'>Ώρα CET</th>{th}</tr>
 {''.join(rows)}
 </table>
 <p style="color:#555;margin:8px 0 2px">€/MWh, ωριαίοι μέσοι όροι των 15λέπτων. Μπλε: πιθανή ευστάθεια/περικοπή
