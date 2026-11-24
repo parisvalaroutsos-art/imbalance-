@@ -105,3 +105,19 @@ def to_html(out: pd.DataFrame, cfg: Config, target_date, run_label: str, notes: 
 {act_note}</p>
 <ul style="color:#555;margin:2px 0">{notes_html}</ul>
 </div>"""
+
+
+def fill_dam_proxy(df: pd.DataFrame, target_date, tz: str) -> tuple[pd.DataFrame, list[str]]:
+    """Αν λείπει η DAM της ημέρας-στόχου, βάλε τη DAM της προηγούμενης ημέρας (ίδια ώρα αγοράς)."""
+    d = pd.Timestamp(target_date).normalize()
+    loc = df.index.tz_convert(tz).tz_localize(None)
+    day = loc.normalize() == d
+    if df.loc[day, "dam"].notna().sum() >= 92:
+        return df, []
+    prev = df.loc[loc.normalize() == d - pd.Timedelta(days=1), "dam"]
+    key = pd.Series(prev.values, index=loc[loc.normalize() == d - pd.Timedelta(days=1)] + pd.Timedelta(days=1))
+    key = key[~key.index.duplicated()]
+    df = df.copy()
+    df.loc[day, "dam"] = key.reindex(loc[day]).values
+    return df, [f"Η DAM της {d:%d/%m} δεν είχε δημοσιευθεί: χρησιμοποιήθηκε ως εκτίμηση η DAM της "
+                f"{d - pd.Timedelta(days=1):%d/%m} (ίδια ώρα). Τα ποσά σε €/MWh είναι ενδεικτικά."]

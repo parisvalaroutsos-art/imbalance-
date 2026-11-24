@@ -106,6 +106,8 @@ def main(argv=None):
     r.add_argument("--html", required=True, help="αρχείο εξόδου HTML")
     r.add_argument("--csv", default=None, help="πλήρης 15λεπτη πρόβλεψη")
     r.add_argument("--allow-missing", action="store_true", help="τρέξε ακόμα κι αν λείπουν δεδομένα")
+    r.add_argument("--dam-proxy", action="store_true",
+                   help="αν δεν έχει βγει η DAM της ημέρας, χρησιμοποίησε τη DAM της προηγούμενης ημέρας (ίδια ώρα)")
 
     g = sub.add_parser("admie", help="κατέβασμα αρχείων ΑΔΜΗΕ σε CSV")
     g.add_argument("--start", required=True)
@@ -160,12 +162,17 @@ def main(argv=None):
         from .report import missing, to_html
 
         df = load_data(a.data, cfg)
+        proxy_note = []
+        if a.dam_proxy:
+            from .report import fill_dam_proxy
+
+            df, proxy_note = fill_dam_proxy(df, a.date, cfg.tz)
         miss = missing(df, cfg.stage, a.date, cfg.tz)
         if miss and not a.allow_missing:
             print(f"NOT_READY {cfg.stage}: λείπουν για {a.date}: {miss}")
             raise SystemExit(3)
         out = forecast(df, cfg, a.date, a.issue_date)
-        notes = [f"Δεν είχαν δημοσιευθεί: {miss}"] if miss else []
+        notes = proxy_note + ([f"Δεν είχαν δημοσιευθεί: {miss}"] if miss else [])
         Path(a.html).write_text(to_html(out, cfg, a.date, a.label, notes), encoding="utf-8")
         if a.csv:
             out.to_csv(a.csv)
