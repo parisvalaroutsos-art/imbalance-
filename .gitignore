@@ -8,4 +8,5 @@ data/*
 !data/prices.csv
 !data/admie.csv
 !data/admie_extra.csv
+!data/entsoe_gen.csv
 reports/

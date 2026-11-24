@@ -109,6 +109,17 @@ def main(argv=None):
     r.add_argument("--dam-proxy", action="store_true",
                    help="αν δεν έχει βγει η DAM της ημέρας, χρησιμοποίησε τη DAM της προηγούμενης ημέρας (ίδια ώρα)")
 
+    en = sub.add_parser("entsoe", help="πραγματική παραγωγή ανά τεχνολογία από το ENTSO-E σε CSV")
+    en.add_argument("--start", required=True)
+    en.add_argument("--end", default=str((pd.Timestamp.today().normalize() + pd.Timedelta(days=1)).date()))
+    en.add_argument("--out", default="data/entsoe_gen.csv")
+
+    nc = sub.add_parser("nowcast", help="πώς πήγε το σύστημα: εκτίμηση imbalance για ώρες που πέρασαν")
+    nc.add_argument("--date", default=str(pd.Timestamp.today().date()))
+    nc.add_argument("--html", default=None)
+    nc.add_argument("--csv", default=None)
+    nc.add_argument("--fetch", action="store_true", help="πρώτα ενημέρωση ENTSO-E, ISP και IDA για την ημέρα")
+
     g = sub.add_parser("admie", help="κατέβασμα αρχείων ΑΔΜΗΕ σε CSV")
     g.add_argument("--start", required=True)
     g.add_argument("--end", default=str((pd.Timestamp.today().normalize() + pd.Timedelta(days=1)).date()))
@@ -133,6 +144,40 @@ def main(argv=None):
     a = ap.parse_args(argv)
     pd.set_option("display.width", 200)
 
+    if a.cmd == "entsoe":
+        from .entsoe import fetch_generation
+
+        fetch_generation(a.start, a.end, a.out)
+        return
+    if a.cmd == "nowcast":
+        from .nowcast import nowcast_day, to_html
+
+        d = pd.Timestamp(a.date)
+        if a.fetch:
+            from .admie import fetch_admie
+            from .enex import fetch_enex
+            from .entsoe import fetch_generation
+
+            prev, nxt = (d - pd.Timedelta(days=1)).date(), (d + pd.Timedelta(days=1)).date()
+            fetch_generation(prev, nxt)
+            fetch_admie(prev, d.date(), only=["isp1", "isp2", "isp3"], sleep=0.4)
+            fetch_enex(prev, d.date(), "data/prices.csv", "data/raw/enex", sleep=0.4)
+        out, trained = nowcast_day(d)
+        if out.empty:
+            print(f"Δεν υπάρχουν ακόμα δεδομένα ENTSO-E για {d.date()}.")
+            return
+        loc = out.index.tz_convert("Europe/Berlin")
+        h = out.groupby(loc.floor("h"))[["dam", "dev_n", "res_dev_n", "p_short", "imb_q10", "imb_q50", "imb_q90",
+                                         "imbalance_actual"]].mean().round(2)
+        h.index = h.index.strftime("%H:%M")
+        h.index.name = "ώρα CET"
+        print(h.to_string())
+        if a.html:
+            Path(a.html).write_text(to_html(out, d, trained), encoding="utf-8")
+            print(f"Αποθηκεύτηκε: {a.html}")
+        if a.csv:
+            out.to_csv(a.csv)
+        return
     if a.cmd == "admie":
         from .admie import fetch_admie
 
