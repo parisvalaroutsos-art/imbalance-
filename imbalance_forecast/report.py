@@ -32,6 +32,7 @@ COLS = [
     ("p_curt", "P(περικοπή)", "{:.2f}"),
     ("p_imb_lt_dam", "P(imb<DAM)", "{:.2f}"),
     ("p_spike_up", "P(imb>DAM+100)", "{:.2f}"),
+    ("isp_activation", "Ενεργοποίηση ISP (MW)", "{:+.0f}"),
 ]
 
 
@@ -62,6 +63,8 @@ def _cell_style(col: str, v: float) -> str:
         return ""
     if col == "p_curt" and v >= 0.3 or col == "stab_prob" and v >= 0.9:
         return "background:#dbe9ff"
+    if col == "isp_activation" and v >= 100:  # σημαντική ενεργοποίηση προς τα πάνω
+        return "background:#ffe1d6"
     if col == "p_spike_up" and v >= 0.2:
         return "background:#ffe1d6"
     if col == "imb_point" and v < 0:
@@ -87,6 +90,9 @@ def to_html(out: pd.DataFrame, cfg: Config, target_date, run_label: str, notes: 
     info = (f"Issue: {out.attrs.get('issue_date')} | imbalance γνωστό έως {out.attrs.get('imbalance_known_through')}"
             f" | IDA: {', '.join(cfg.ida_available) or 'καμία'}")
     notes_html = "".join(f"<li>{html.escape(n)}</li>" for n in notes)
+    act_note = ("<br>Ενεργοποίηση ISP: σχεδιασμένη καθαρή ενεργοποίηση εξισορρόπησης του ΑΔΜΗΕ (Cleared Energy Up − Down,"
+                " πιο πρόσφατο ISP). Θετική = το σύστημα χρειάζεται ενέργεια προς τα πάνω· με ευστάθεια ταυτόχρονα,"
+                " ο κίνδυνος σπάικ είναι ο υψηλότερος." if "isp_activation" in h.columns else "")
     return f"""<div style="font-family:Arial,sans-serif;font-size:13px">
 <h3 style="margin:0 0 4px">Πρόβλεψη imbalance {d:%d/%m/%Y} — {html.escape(run_label)}</h3>
 <p style="margin:0 0 8px;color:#555">{html.escape(STAGE_TITLE.get(cfg.stage, cfg.stage))}. {html.escape(info)}</p>
@@ -95,6 +101,7 @@ def to_html(out: pd.DataFrame, cfg: Config, target_date, run_label: str, notes: 
 {''.join(rows)}
 </table>
 <p style="color:#555;margin:8px 0 2px">€/MWh, ωριαίοι μέσοι όροι των 15λέπτων. Μπλε: πιθανή ευστάθεια/περικοπή
-(imbalance προς το κατώτατο όριο). Πορτοκαλί: αυξημένος κίνδυνος ανοδικού σπάικ.</p>
+(imbalance προς το κατώτατο όριο). Πορτοκαλί: αυξημένος κίνδυνος ανοδικού σπάικ.
+{act_note}</p>
 <ul style="color:#555;margin:2px 0">{notes_html}</ul>
 </div>"""

@@ -177,6 +177,8 @@ def forecast(df: pd.DataFrame, cfg: Config, target_date, issue_date=None) -> pd.
         print("ΠΡΟΣΟΧΗ: δεν υπάρχει τιμή DAM για την ημέρα-στόχο -> imb_* = NaN (δώστε εκτίμηση στη στήλη dam).")
     model = ImbalanceModel(cfg_run, feats, stab_feats).fit(train, _stab_slice(frame, cfg_run, stab_cutoff))
     out = tgt[["dam"]].join(model.predict(tgt))
+    if "act_last" in tgt:  # σχεδιασμένη καθαρή ενεργοποίηση ISP (MW, + = προς τα πάνω), για την αναφορά
+        out["isp_activation"] = tgt["act_last"]
     out.attrs.update(
         issue_date=str(issue_date.date()),
         imbalance_known_through=str(cutoff.date()),
