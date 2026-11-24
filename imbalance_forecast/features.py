@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 
@@ -293,7 +295,9 @@ def build_features(
     f["offday"] = ((f["dow"] >= 5) | (f["holiday"] == 1)).astype(int)
     cal_cols = ["hour", "qh", "dow", "month", "doy_sin", "doy_cos", "holiday", "offday"]
 
-    exog_cols = _add_exog(f, df, cfg)
+    with warnings.catch_warnings():  # πολλές προσθήκες στηλών -> PerformanceWarning, λύνεται με το copy
+        warnings.simplefilter("ignore", pd.errors.PerformanceWarning)
+        exog_cols = _add_exog(f, df, cfg)
     f = f.copy()  # συμπαγές DataFrame μετά από πολλές προσθήκες στηλών
     if "dam" not in f:
         f["dam"] = df[cfg.col_dam].values if cfg.col_dam in df else np.nan
