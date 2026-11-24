@@ -39,6 +39,10 @@ class Config:
     target: str = "spread"  # "spread" (= imbalance - DAM) ή "imbalance"
     quantiles: tuple[float, ...] = (0.1, 0.5, 0.9)
     winsor: tuple[float, float] = (0.005, 0.995)  # περικοπή ακραίων τιμών μόνο στην εκπαίδευση
+    # Βαθμονόμηση εύρους q10-q90 (conformal) στις τελευταίες cal_days γνωστές ημέρες κάθε εκπαίδευσης.
+    # Χωρίς αυτήν το backtest κάλυπτε 56-60% αντί για 80%.
+    calibrate_intervals: bool = True
+    cal_days: int = 28
 
     # --- Εκπαίδευση / training ---
     train_window_days: int = 365

@@ -23,6 +23,8 @@ class ImbalanceModel:
         self.reg = {}
         self.clf = None
         self.clf_up = None
+        self.cal_lo = 0.0  # διεύρυνση κάτω άκρου (conformal), στη μονάδα του στόχου
+        self.cal_hi = 0.0
         self.stab_clf = None
 
     # ------------------------------------------------------------ ευστάθεια
@@ -91,6 +93,7 @@ class ImbalanceModel:
         for q in self.cfg.quantiles:
             m = HistGradientBoostingRegressor(loss="quantile", quantile=q, **self.cfg.gbm_params)
             self.reg[q] = m.fit(X[keep], y_w[keep])
+        self._calibrate(d, X, y, y_w, keep)
         sign = (d["spread"] > 0).astype(int)
         if sign.nunique() == 2:
             self.clf = HistGradientBoostingClassifier(**self.cfg.gbm_params).fit(X[keep], sign[keep])
@@ -98,6 +101,28 @@ class ImbalanceModel:
         if up.nunique() == 2:
             self.clf_up = HistGradientBoostingClassifier(**self.cfg.gbm_params).fit(X[keep], up[keep])
         return self
+
+    def _calibrate(self, d, X, y, y_w, keep) -> None:
+        """Conformal βαθμονόμηση του εύρους (CQR): εκπαίδευση των άκρων χωρίς τις τελευταίες cal_days ημέρες,
+        μέτρηση πόσο έξω από το εύρος πέφτει η πραγματική τιμή σε αυτές, και διεύρυνση κάθε άκρου ώστε
+        q_low..q_high να καλύπτει πράγματι (q_high - q_low) των περιπτώσεων (π.χ. 80%)."""
+        qs = sorted(self.cfg.quantiles)
+        if not self.cfg.calibrate_intervals or len(qs) < 2:
+            return
+        dates = np.sort(d["date"].unique())
+        if len(dates) < self.cfg.cal_days + self.cfg.min_train_days // 2:
+            return
+        cal = d["date"].isin(dates[-self.cfg.cal_days:]).to_numpy()
+        fit_rows = keep & ~cal
+        q_lo, q_hi = qs[0], qs[-1]
+        lo_hi = []
+        for q in (q_lo, q_hi):
+            m = HistGradientBoostingRegressor(loss="quantile", quantile=q, **self.cfg.gbm_params)
+            lo_hi.append(m.fit(X[fit_rows], y_w[fit_rows]).predict(X[cal]))
+        yc = y.to_numpy()[cal]
+        # μη-κάλυψη ανά άκρο: θέλουμε P(y < low - δ_lo) = q_lo και P(y > high + δ_hi) = 1 - q_hi
+        self.cal_lo = float(np.quantile(lo_hi[0] - yc, 1 - q_lo))
+        self.cal_hi = float(np.quantile(yc - lo_hi[1], q_hi))
 
     def predict(self, frame: pd.DataFrame) -> pd.DataFrame:
         frame = frame.copy()
@@ -111,6 +136,10 @@ class ImbalanceModel:
         X = frame[self.features]
         qs = sorted(self.cfg.quantiles)
         P = np.sort(np.column_stack([self.reg[q].predict(X) for q in qs]), axis=1)  # χωρίς διασταύρωση
+        if len(qs) >= 2:  # βαθμονομημένο εύρος (τα άκρα δεν περνούν τη διάμεσο)
+            mid = P[:, len(qs) // 2]
+            P[:, 0] = np.minimum(P[:, 0] - self.cal_lo, mid)
+            P[:, -1] = np.maximum(P[:, -1] + self.cal_hi, mid)
         dam = frame["dam"].values
         for i, q in enumerate(qs):
             tag = f"q{int(round(q * 100)):02d}"
