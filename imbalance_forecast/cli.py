@@ -119,6 +119,8 @@ def main(argv=None):
     nc.add_argument("--html", default=None)
     nc.add_argument("--csv", default=None)
     nc.add_argument("--fetch", action="store_true", help="πρώτα ενημέρωση ENTSO-E, ISP και IDA για την ημέρα")
+    nc.add_argument("--realtime", action="store_true",
+                    help="στην αρχή της αναφοράς και πρόβλεψη πραγματικού χρόνου για τις επόμενες 3 ώρες")
 
     rt = sub.add_parser("realtime", help="πρόβλεψη πραγματικού χρόνου για τις επόμενες 3 ώρες")
     rt.add_argument("--lag", type=int, default=30, help="καθυστέρηση ENTSO-E σε λεπτά")
@@ -178,8 +180,18 @@ def main(argv=None):
         h.index = h.index.strftime("%H:%M")
         h.index.name = "ώρα CET"
         print(h.to_string())
+        page = to_html(out, d, trained)
+        if a.realtime:
+            from .realtime import forecast_now, to_html as rt_html
+
+            rt, last_s, rt_trained = forecast_now()
+            rt.to_csv(Path(a.html or "reports/x.html").with_name(f"{d.date()}_realtime.csv"), index=False)
+            page = rt_html(rt, last_s, rt_trained) + "<hr style='margin:16px 0'>" + page
+            print("Πρόβλεψη επόμενων 3 ωρών:")
+            print(rt.assign(t=pd.DatetimeIndex(rt["t"]).tz_convert("Europe/Berlin").strftime("%H:%M"))[
+                ["t", "dam_t", "p_short", "imb_q10", "imb_q50", "imb_q90"]].round(2).to_string(index=False))
         if a.html:
-            Path(a.html).write_text(to_html(out, d, trained), encoding="utf-8")
+            Path(a.html).write_text(page, encoding="utf-8")
             print(f"Αποθηκεύτηκε: {a.html}")
         if a.csv:
             out.to_csv(a.csv)
