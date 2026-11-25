@@ -82,6 +82,13 @@ def build_panel(m: pd.DataFrame, lag_min: int = 30, every: int = 2, since=None, 
         r["isp_res_sched_t"] = r.pop("res_t") - np.nan_to_num(r["isp_stab_t"])
         for c in ("dev_n", "res_dev_n", "dev", "bess", "dam"):
             r[f"{c}_s"] = m[c].to_numpy()[s]
+        # πραγματικές ενεργοποιήσεις mFRR (ENTSO-E A84) στα τελευταία γνωστά 15λεπτα: τιμή και αν έγινε ενεργοποίηση
+        for c in ("mfrr_up", "mfrr_dn"):
+            if c in m:
+                mf = m[c]
+                r[f"{c}_s"] = mf.to_numpy()[s]
+                r[f"{c}_r4_s"] = mf.rolling(4, min_periods=1).mean().to_numpy()[s]
+                r[f"{c}_n4_s"] = mf.notna().rolling(4).sum().to_numpy()[s]
         r["dev_r4_s"] = m["dev_n"].rolling(4, min_periods=2).mean().to_numpy()[s]
         r["dam_t_m_s"] = r["dam_t"] - r["dam_s"]
         r["spread"] = m["spread"].to_numpy()[t]
@@ -91,10 +98,21 @@ def build_panel(m: pd.DataFrame, lag_min: int = 30, every: int = 2, since=None, 
     return p[p["dev_s"].notna()]
 
 
+MFRR_FEATURES = ["mfrr_up_s", "mfrr_dn_s", "mfrr_up_r4_s", "mfrr_dn_r4_s", "mfrr_up_n4_s", "mfrr_dn_n4_s"]
+
+
 class RealtimeModel:
+    def __init__(self, use_mfrr: bool = False, halflife_days: float | None = None):
+        self.use_mfrr = use_mfrr
+        self.halflife_days = halflife_days
+
     def fit(self, p: pd.DataFrame) -> "RealtimeModel":
         k = p.dropna(subset=["spread"])
-        self.features = [f for f in FEATURES if k[f].notna().sum() > 100]
+        feats = FEATURES + (MFRR_FEATURES if self.use_mfrr else [])
+        self.features = [f for f in feats if f in k and k[f].notna().sum() > 100]
+        if self.halflife_days:  # βάρη εγγύτητας με υποδειγματοληψία (όπως στο μοντέλο των σταδίων)
+            age = (k["t"].max() - k["t"]).dt.total_seconds().to_numpy() / 86400
+            k = k[np.random.default_rng(0).random(len(k)) < 0.5 ** (age / self.halflife_days)]
         lo, hi = k["spread"].quantile([0.005, 0.995])
         X, y = k[self.features], k["spread"].clip(lo, hi)
         self.clf = HistGradientBoostingClassifier(**GBM).fit(X, k["spread"] > 0)
@@ -135,7 +153,7 @@ def forecast_now(lag_min: int = 30, since="2025-07-01") -> tuple[pd.DataFrame, p
     lag_slots = lag_min // 15 + 1
     tau = last_s + pd.Timedelta(minutes=15) * lag_slots
     panel = build_panel(m, lag_min, every=2, since=since)
-    model = RealtimeModel().fit(panel[panel["spread"].notna()])
+    model = RealtimeModel(use_mfrr=True).fit(panel[panel["spread"].notna()])
     full = build_panel(m, lag_min, every=1, since=tau, until=tau + pd.Timedelta(minutes=1))
     out = model.predict(full)
     out["ida_t"] = full["dam_t"].values + full["ida_m_dam_t"].values
@@ -171,13 +189,13 @@ imbalance vs DAM 75% για το επόμενο 15λεπτο, 68% σε 3 ώρε�
 τελευταίου δημοσιευμένου ISP results για το 15λεπτο και ο μέσος όρος τους.</p></div>"""
 
 
-def evaluate(cut="2026-05-01", lag_min=30, since="2025-07-01"):
+def evaluate(cut="2026-05-01", lag_min=30, since="2025-07-01", use_mfrr=False, halflife_days=None, m=None):
     """Έλεγχος εκτός εκπαίδευσης: εκπαίδευση πριν το cut, έλεγχος μετά, ανά ορίζοντα."""
-    m = build_frame()
+    m = build_frame() if m is None else m
     tr = build_panel(m, lag_min, every=2, since=since, until=cut)
     tr = tr[tr["t"] < pd.Timestamp(cut, tz="UTC")]
     te = build_panel(m, lag_min, every=4, since=cut).dropna(subset=["spread"])
-    model = RealtimeModel().fit(tr)
+    model = RealtimeModel(use_mfrr, halflife_days).fit(tr)
     o = model.predict(te)
     o["imbalance"], o["spread"], o["ida_m_dam_t"] = te["imbalance"].values, te["spread"].values, te["ida_m_dam_t"].values
     return o

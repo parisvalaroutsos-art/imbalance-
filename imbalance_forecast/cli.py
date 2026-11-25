@@ -33,6 +33,7 @@ def _cfg(a) -> Config:
         target=a.target,
         pub_available_same_day=a.pub_same_day,
         train_window_days=a.window,
+        recency_halflife_days=a.halflife or None,
         retrain_every_weeks=getattr(a, "retrain_every", 1),
         stab_threshold=a.stab_threshold,
     )
@@ -52,6 +53,8 @@ def _common(p):
     p.add_argument("--ida", nargs="*", default=None, help="διαθέσιμες IDA στο issue (προεπιλογή: από το στάδιο)")
     p.add_argument("--pub-same-day", action="store_true", help="τα imbalance της Πέμπτης διαθέσιμα ήδη την Πέμπτη")
     p.add_argument("--window", type=int, default=365, help="παράθυρο εκπαίδευσης (ημέρες)")
+    p.add_argument("--halflife", type=float, default=60.0,
+                   help="ημιζωή βάρους εγγύτητας στην εκπαίδευση (ημέρες, 0 = ίσα βάρη)")
     p.add_argument("--stab-threshold", type=float, default=0.0, help="MW περικοπής πάνω από τα οποία = ευστάθεια")
 
 
