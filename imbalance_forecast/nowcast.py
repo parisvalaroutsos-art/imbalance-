@@ -127,6 +127,15 @@ def nowcast_day(day, **paths) -> tuple[pd.DataFrame, pd.Timestamp]:
     return model.predict(m[loc == d]), model.trained_through
 
 
+def direction_label(p: float) -> tuple[str, str]:
+    """Κατεύθυνση imbalance ως προς τη DAM με την πιθανότητα ΑΥΤΗΣ της κατεύθυνσης (p = P(imbalance > DAM))."""
+    if p >= 0.6:
+        return f"↑ πάνω από DAM — {p:.0%}", "#ffe1d6" if p >= 0.7 else "#fff0e8"
+    if p <= 0.4:
+        return f"↓ κάτω από DAM — {1 - p:.0%}", "#dbe9ff" if p <= 0.3 else "#eef5ff"
+    return f"αβέβαιο (πάνω {p:.0%} / κάτω {1 - p:.0%})", ""
+
+
 def _status(p: float) -> tuple[str, str]:
     if p >= 0.8:
         return "κοντό (ενεργ. ↑)", "#ffe1d6"
@@ -155,13 +164,13 @@ def to_html(out: pd.DataFrame, day, trained_through) -> str:
             f"<td style='padding:3px 8px;text-align:right'>{r.dev:+.0f}</td>"
             f"<td style='padding:3px 8px;text-align:right'>{r.res_dev:+.0f}</td>"
             f"<td style='padding:3px 8px;background:{bg}'>{st}</td>"
-            f"<td style='padding:3px 8px;text-align:right'>{r.p_short:.2f}</td>"
+            f"<td style='padding:3px 8px;background:{direction_label(r.p_short)[1]}'>{direction_label(r.p_short)[0]}</td>"
             f"<td style='padding:3px 8px;text-align:right;font-weight:bold'>{r.q50:.0f}</td>"
             f"<td style='padding:3px 8px;text-align:right'>{r.q10:.0f} – {r.q90:.0f}</td>"
             f"<td style='padding:3px 8px;text-align:right'>{act}</td>"
             f"<td style='padding:3px 8px;text-align:right;color:#888'>{int(r.n)}/4</td></tr>")
     th = "".join(f"<th style='padding:4px 8px;border-bottom:2px solid #555'>{html.escape(c)}</th>" for c in [
-        "Ώρα CET", "DAM", "Μονάδες vs ISP (MW)*", "ΑΠΕ vs ISP (MW)*", "Σύστημα", "P(imb>DAM)",
+        "Ώρα CET", "DAM", "Μονάδες vs ISP (MW)*", "ΑΠΕ vs ISP (MW)*", "Σύστημα", "Imbalance vs DAM (πιθανότητα)",
         "Imbalance (εκτίμηση)", "εύρος q10–q90", "Πραγματικό", "15λεπτα"])
     last = out.index.max().tz_convert(TZ)
     return f"""<div style="font-family:Arial,sans-serif;font-size:13px">

@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 
-from .nowcast import GBM, TZ, build_frame
+from .nowcast import GBM, TZ, build_frame, direction_label
 
 H = 12  # ορίζοντες (15λεπτα)
 FEATURES = ["k", "dist", "hour_t", "qh_t", "dam_t", "ida_m_dam_t", "isp_stab_t", "isp_act_t", "isp_ctrl_t",
@@ -144,18 +144,16 @@ def to_html(out: pd.DataFrame, last_s, trained) -> str:
     rows = []
     for _, r in out.iterrows():
         t = pd.Timestamp(r.t).tz_convert(TZ)
-        p = r.p_short
-        bg = "#ffe1d6" if p >= 0.7 else "#dbe9ff" if p <= 0.3 else ""
-        st = "πάνω από DAM" if p >= 0.7 else "κάτω από DAM" if p <= 0.3 else "αβέβαιο"
+        st, bg = direction_label(r.p_short)
         ida = "" if pd.isna(r.ida_t) else f"{r.ida_t:.1f}"
         rows.append(f"<tr><td style='padding:3px 8px'>{t:%H:%M}</td>"
                     f"<td style='padding:3px 8px;text-align:right'>{r.dam_t:.1f}</td>"
                     f"<td style='padding:3px 8px;text-align:right'>{ida}</td>"
-                    f"<td style='padding:3px 8px;text-align:right;background:{bg}'>{p:.2f} ({st})</td>"
+                    f"<td style='padding:3px 8px;background:{bg}'>{st}</td>"
                     f"<td style='padding:3px 8px;text-align:right;font-weight:bold'>{r.imb_q50:.0f}</td>"
                     f"<td style='padding:3px 8px;text-align:right'>{r.imb_q10:.0f} – {r.imb_q90:.0f}</td></tr>")
     th = "".join(f"<th style='padding:4px 8px;border-bottom:2px solid #555'>{c}</th>" for c in
-                 ["15λεπτο CET", "DAM", "Τελευταία IDA", "P(imb&gt;DAM)", "Imbalance (πρόβλεψη)", "εύρος q10–q90"])
+                 ["15λεπτο CET", "DAM", "Τελευταία IDA", "Imbalance vs DAM (πιθανότητα)", "Imbalance (πρόβλεψη)", "εύρος q10–q90"])
     ls = pd.Timestamp(last_s).tz_convert(TZ)
     return f"""<div style="font-family:Arial,sans-serif;font-size:13px">
 <h3 style="margin:0 0 4px">Πρόβλεψη imbalance πραγματικού χρόνου — επόμενες 3 ώρες</h3>
