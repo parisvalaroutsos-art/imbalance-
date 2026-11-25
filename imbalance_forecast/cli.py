@@ -120,6 +120,12 @@ def main(argv=None):
     nc.add_argument("--csv", default=None)
     nc.add_argument("--fetch", action="store_true", help="πρώτα ενημέρωση ENTSO-E, ISP και IDA για την ημέρα")
 
+    rt = sub.add_parser("realtime", help="πρόβλεψη πραγματικού χρόνου για τις επόμενες 3 ώρες")
+    rt.add_argument("--lag", type=int, default=30, help="καθυστέρηση ENTSO-E σε λεπτά")
+    rt.add_argument("--html", default=None)
+    rt.add_argument("--csv", default=None)
+    rt.add_argument("--fetch", action="store_true", help="πρώτα ενημέρωση ENTSO-E, ISP και IDA")
+
     g = sub.add_parser("admie", help="κατέβασμα αρχείων ΑΔΜΗΕ σε CSV")
     g.add_argument("--start", required=True)
     g.add_argument("--end", default=str((pd.Timestamp.today().normalize() + pd.Timedelta(days=1)).date()))
@@ -177,6 +183,29 @@ def main(argv=None):
             print(f"Αποθηκεύτηκε: {a.html}")
         if a.csv:
             out.to_csv(a.csv)
+        return
+    if a.cmd == "realtime":
+        from .realtime import forecast_now, to_html as rt_html
+
+        if a.fetch:
+            from .admie import fetch_admie
+            from .enex import fetch_enex
+            from .entsoe import fetch_generation
+
+            today = pd.Timestamp.now(tz="Europe/Berlin").normalize().tz_localize(None)
+            prev, nxt = (today - pd.Timedelta(days=1)).date(), (today + pd.Timedelta(days=1)).date()
+            fetch_generation(prev, nxt)
+            fetch_admie(prev, nxt, only=["isp1", "isp2", "isp3"], sleep=0.4)
+            fetch_enex(prev, nxt, "data/prices.csv", "data/raw/enex", sleep=0.4)
+        out, last_s, trained = forecast_now(a.lag)
+        show = out.assign(t=pd.DatetimeIndex(out["t"]).tz_convert("Europe/Berlin").strftime("%H:%M"))
+        print(f"Τελευταίο 15λεπτο ENTSO-E: {pd.Timestamp(last_s).tz_convert('Europe/Berlin'):%d/%m %H:%M} CET")
+        print(show[["t", "dam_t", "ida_t", "p_short", "imb_q10", "imb_q50", "imb_q90"]].round(2).to_string(index=False))
+        if a.html:
+            Path(a.html).write_text(rt_html(out, last_s, trained), encoding="utf-8")
+            print(f"Αποθηκεύτηκε: {a.html}")
+        if a.csv:
+            out.to_csv(a.csv, index=False)
         return
     if a.cmd == "admie":
         from .admie import fetch_admie
