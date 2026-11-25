@@ -160,7 +160,7 @@ def main(argv=None):
 
             prev, nxt = (d - pd.Timedelta(days=1)).date(), (d + pd.Timedelta(days=1)).date()
             fetch_generation(prev, nxt)
-            fetch_admie(prev, d.date(), only=["isp1", "isp2", "isp3"], sleep=0.4)
+            fetch_admie(prev, d.date(), only=["isp1", "isp2", "isp3", "imbabe"], sleep=0.4)
             fetch_enex(prev, d.date(), "data/prices.csv", "data/raw/enex", sleep=0.4)
         out, trained = nowcast_day(d)
         if out.empty:
