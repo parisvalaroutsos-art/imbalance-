@@ -9,4 +9,5 @@ data/*
 !data/admie.csv
 !data/admie_extra.csv
 !data/entsoe_gen.csv
+!data/entsoe_mfrr.csv
 reports/

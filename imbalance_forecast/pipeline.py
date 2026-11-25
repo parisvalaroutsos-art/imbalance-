@@ -179,6 +179,14 @@ def forecast(df: pd.DataFrame, cfg: Config, target_date, issue_date=None) -> pd.
     out = tgt[["dam"]].join(model.predict(tgt))
     if "act_last" in tgt:  # σχεδιασμένη καθαρή ενεργοποίηση ISP (MW, + = προς τα πάνω), για την αναφορά
         out["isp_activation"] = tgt["act_last"]
+    # οριακές τιμές ενέργειας του τελευταίου ISP που είναι γνωστό στο στάδιο (μόνο για την αναφορά)
+    for col, kind in (("isp_pup", "pup"), ("isp_pdn", "pdn")):
+        srcs = [f"{kind}_isp{k}" for k in (3, 2, 1) if f"{kind}_isp{k}" in cfg_run.same_day_cols and f"{kind}_isp{k}" in df]
+        if srcs:
+            v = df[srcs[0]]
+            for c in srcs[1:]:
+                v = v.combine_first(df[c])
+            out[col] = v.reindex(out.index).values
     out.attrs.update(
         issue_date=str(issue_date.date()),
         imbalance_known_through=str(cutoff.date()),

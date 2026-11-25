@@ -19,3 +19,14 @@ def test_parse_a75_partial_day_and_compressed_curve():
     assert "hydro_pumped_cons" in df and "storage_cons" in df  # κατανάλωση χωριστά
     c = controllable(df)
     assert c.loc["2026-11-24 20:30+00:00"] == 3838 + 63 + 545  # αέριο + αντλησιοταμίευση + ταμιευτήρες
+
+
+def test_parse_a84_mfrr_prices():
+    """Τιμές ενεργοποίησης mFRR: λείπουσα θέση = καμία ενεργοποίηση (NaN), όχι συμπλήρωση."""
+    from imbalance_forecast.entsoe import parse_a84
+
+    df = parse_a84((FX / "entsoe_a84_20261125_partial.xml").read_bytes())
+    assert set(df.columns) == {"mfrr_up", "mfrr_dn"}
+    assert df.loc["2026-11-25 08:30+00:00", "mfrr_up"] == 236.0
+    assert pd.isna(df.loc["2026-11-25 09:00+00:00", "mfrr_up"]) and df.loc["2026-11-25 09:00+00:00", "mfrr_dn"] == 135.28
+    assert df["mfrr_up"].notna().sum() == 26 and df["mfrr_dn"].notna().sum() == 22

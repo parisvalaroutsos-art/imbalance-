@@ -33,6 +33,8 @@ COLS = [
     ("p_imb_lt_dam", "P(imb<DAM)", "{:.2f}"),
     ("p_spike_up", "P(imb>DAM+100)", "{:.2f}"),
     ("isp_activation", "Ενεργοποίηση ISP (MW)", "{:+.0f}"),
+    ("isp_pup", "ISP Price Up", "{:.0f}"),
+    ("isp_pdn", "ISP Price Down", "{:.0f}"),
 ]
 
 
@@ -58,7 +60,9 @@ def hourly_table(out: pd.DataFrame) -> pd.DataFrame:
     return h
 
 
-def _cell_style(col: str, v: float) -> str:
+def _cell_style(col: str, v) -> str:
+    if isinstance(v, str):
+        return ""
     if pd.isna(v):
         return ""
     if col == "p_curt" and v >= 0.3 or col == "stab_prob" and v >= 0.9:
@@ -76,13 +80,19 @@ def to_html(out: pd.DataFrame, cfg: Config, target_date, run_label: str, notes: 
     h = hourly_table(out)
     names = {c: n for c, n, _ in COLS}
     fmts = {c: f for c, _, f in COLS}
+    if {"isp_pup", "isp_pdn"} <= set(h.columns):  # μία στήλη «Up / Down (μέσο)»
+        from .nowcast import isp_prices
+
+        h["isp_prices"] = [isp_prices(u, d) for u, d in zip(h["isp_pup"], h["isp_pdn"])]
+        h = h.drop(columns=["isp_pup", "isp_pdn"])
+        names["isp_prices"], fmts["isp_prices"] = "ISP Price Up / Down (μέσο)", "{}"
     th = "".join(f"<th style='padding:4px 8px;border-bottom:2px solid #555'>{html.escape(names[c])}</th>"
                  for c in h.columns)
     rows = []
     for idx, r in h.iterrows():
         tds = "".join(
             f"<td style='padding:3px 8px;text-align:right;{_cell_style(c, r[c])}'>"
-            f"{'' if pd.isna(r[c]) else fmts[c].format(r[c])}</td>"
+            f"{r[c] if isinstance(r[c], str) else ('' if pd.isna(r[c]) else fmts[c].format(r[c]))}</td>"
             for c in h.columns
         )
         rows.append(f"<tr><td style='padding:3px 8px'>{idx}</td>{tds}</tr>")

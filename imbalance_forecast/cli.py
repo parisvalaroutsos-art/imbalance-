@@ -164,10 +164,11 @@ def main(argv=None):
         if a.fetch:
             from .admie import fetch_admie
             from .enex import fetch_enex
-            from .entsoe import fetch_generation
+            from .entsoe import fetch_generation, fetch_mfrr_prices
 
             prev, nxt = (d - pd.Timedelta(days=1)).date(), (d + pd.Timedelta(days=1)).date()
             fetch_generation(prev, nxt)
+            fetch_mfrr_prices(prev, nxt)
             fetch_admie(prev, d.date(), only=["isp1", "isp2", "isp3", "imbabe"], sleep=0.4)
             fetch_enex(prev, d.date(), "data/prices.csv", "data/raw/enex", sleep=0.4)
         out, trained = nowcast_day(d)
@@ -202,11 +203,12 @@ def main(argv=None):
         if a.fetch:
             from .admie import fetch_admie
             from .enex import fetch_enex
-            from .entsoe import fetch_generation
+            from .entsoe import fetch_generation, fetch_mfrr_prices
 
             today = pd.Timestamp.now(tz="Europe/Berlin").normalize().tz_localize(None)
             prev, nxt = (today - pd.Timedelta(days=1)).date(), (today + pd.Timedelta(days=1)).date()
             fetch_generation(prev, nxt)
+            fetch_mfrr_prices(prev, nxt)
             fetch_admie(prev, nxt, only=["isp1", "isp2", "isp3"], sleep=0.4)
             fetch_enex(prev, nxt, "data/prices.csv", "data/raw/enex", sleep=0.4)
         out, last_s, trained = forecast_now(a.lag)

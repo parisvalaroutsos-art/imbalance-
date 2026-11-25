@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import html
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -33,7 +34,7 @@ def _read(path) -> pd.DataFrame:
 
 
 def build_frame(gen_csv="data/entsoe_gen.csv", admie_csv="data/admie.csv", extra_csv="data/admie_extra.csv",
-                prices_csv="data/prices.csv") -> pd.DataFrame:
+                prices_csv="data/prices.csv", mfrr_csv="data/entsoe_mfrr.csv") -> pd.DataFrame:
     g, a, x, p = _read(gen_csv), _read(admie_csv), _read(extra_csv), _read(prices_csv)
     xc = [c for c in ("isp_thermal", "isp_hydro", "isp2_thermal", "isp2_hydro", "isp3_thermal", "isp3_hydro",
                       "isp_renewables") if c in x]
@@ -59,6 +60,14 @@ def build_frame(gen_csv="data/entsoe_gen.csv", admie_csv="data/admie.csv", extra
     m["isp_res"] = latest("res_isp3", "res_isp2", "isp_renewables")
     m["isp_stab"] = latest("stab_isp3", "stab_isp2", "stability")
     m["isp_act"] = latest("act_isp3", "act_isp2", "act_isp1")
+    m["isp_pup"] = latest("pup_isp3", "pup_isp2", "pup_isp1")  # Price Energy Up του τελευταίου ISP
+    m["isp_pdn"] = latest("pdn_isp3", "pdn_isp2", "pdn_isp1")  # Price Energy Down
+    if Path(mfrr_csv).exists():  # τιμές ενεργοποίησης mFRR (ENTSO-E A84), NaN = καμία ενεργοποίηση
+        mf = _read(mfrr_csv)
+        for c in ("mfrr_up", "mfrr_dn"):
+            m[c] = mf[c].reindex(idx) if c in mf else np.nan
+    else:
+        m["mfrr_up"] = m["mfrr_dn"] = np.nan
     m["dev"] = m["ctrl"] - m["isp_ctrl"]          # + = οι μονάδες έδωσαν περισσότερο από το πρόγραμμα
     # Η γραμμή «Renewables» του ISP είναι η ΔΙΑΘΕΣΙΜΗ ΑΠΕ· όταν υπάρχει πλεόνασμα (Energy Surplus < 0), το
     # πρόγραμμα αγοράς των ΑΠΕ είναι διαθέσιμη - πλεόνασμα (π.χ. 7.000 - 2.000 = 5.000 MW). Σύγκριση με αυτό.
@@ -107,7 +116,7 @@ class Nowcaster:
         X = k[self.features]
         out = pd.DataFrame(index=k.index)
         out["dam"] = k["dam"]
-        for c in ("ctrl", "isp_ctrl", "dev", "res_dev", "dev_n", "res_dev_n"):
+        for c in ("ctrl", "isp_ctrl", "dev", "res_dev", "dev_n", "res_dev_n", "isp_pup", "isp_pdn", "mfrr_up", "mfrr_dn"):
             out[c] = k[c]
         out["p_short"] = self.clf.predict_proba(X)[:, 1]  # P(imbalance > DAM) = σύστημα «κοντό»
         P = np.sort(np.column_stack([self.reg[q].predict(X) for q in (0.1, 0.5, 0.9)]), axis=1)
@@ -148,12 +157,25 @@ def _status(p: float) -> tuple[str, str]:
     return "μακρύ (ενεργ. ↓)", "#dbe9ff"
 
 
+def _num(v) -> str:
+    return "–" if v is None or pd.isna(v) else f"{v:.0f}"
+
+
+def isp_prices(up, dn) -> str:
+    """«Up / Down (μέσο)» με τις οριακές τιμές ενέργειας του ISP (€/MWh)."""
+    if pd.isna(up) and pd.isna(dn):
+        return "–"
+    mid = (up + dn) / 2 if not (pd.isna(up) or pd.isna(dn)) else np.nan
+    return f"{_num(up)} / {_num(dn)} ({_num(mid)})"
+
+
 def to_html(out: pd.DataFrame, day, trained_through) -> str:
     loc = out.index.tz_convert(TZ)
     h = out.groupby(loc.floor("h")).agg(
         dam=("dam", "mean"), dev=("dev_n", "mean"), res_dev=("res_dev_n", "mean"), p_short=("p_short", "mean"),
         q10=("imb_q10", "mean"), q50=("imb_q50", "mean"), q90=("imb_q90", "mean"),
-        actual=("imbalance_actual", "mean"), n=("dev", "size"))
+        actual=("imbalance_actual", "mean"), n=("dev", "size"),
+        pup=("isp_pup", "mean"), pdn=("isp_pdn", "mean"), mup=("mfrr_up", "mean"), mdn=("mfrr_dn", "mean"))
     rows = []
     for t, r in h.iterrows():
         st, bg = _status(r.p_short)
@@ -168,10 +190,13 @@ def to_html(out: pd.DataFrame, day, trained_through) -> str:
             f"<td style='padding:3px 8px;text-align:right;font-weight:bold'>{r.q50:.0f}</td>"
             f"<td style='padding:3px 8px;text-align:right'>{r.q10:.0f} – {r.q90:.0f}</td>"
             f"<td style='padding:3px 8px;text-align:right'>{act}</td>"
+            f"<td style='padding:3px 8px;text-align:right'>{isp_prices(r.pup, r.pdn)}</td>"
+            f"<td style='padding:3px 8px;text-align:right'>{_num(r.mup)} / {_num(r.mdn)}</td>"
             f"<td style='padding:3px 8px;text-align:right;color:#888'>{int(r.n)}/4</td></tr>")
     th = "".join(f"<th style='padding:4px 8px;border-bottom:2px solid #555'>{html.escape(c)}</th>" for c in [
         "Ώρα CET", "DAM", "Μονάδες: σήμερα vs ISP (MW)*", "ΑΠΕ: σήμερα vs ISP (MW)*", "Σύστημα", "Imbalance vs DAM (πιθανότητα)",
-        "Imbalance (εκτίμηση)", "εύρος q10–q90", "Πραγματικό", "15λεπτα"])
+        "Imbalance (εκτίμηση)", "εύρος q10–q90", "Πραγματικό", "ISP Price Up / Down (μέσο)", "mFRR ENTSO-E Up / Down",
+        "15λεπτα"])
     last = out.index.max().tz_convert(TZ)
     return f"""<div style="font-family:Arial,sans-serif;font-size:13px">
 <h3 style="margin:0 0 4px">Πώς πήγε το σύστημα — {pd.Timestamp(day):%d/%m/%Y}</h3>
@@ -187,4 +212,7 @@ def to_html(out: pd.DataFrame, day, trained_through) -> str:
 πρόγραμμα του ISP. Θετικό = ο ΑΔΜΗΕ ζήτησε περισσότερη ενέργεια (σύστημα κοντό → imbalance συνήθως πάνω από τη DAM).
 Αρνητικό = λιγότερη (σύστημα μακρύ → imbalance συνήθως κάτω, έως το κατώτατο όριο). «ΑΠΕ»: πραγματικές ΑΠΕ
 μείον πρόγραμμα αγοράς ΑΠΕ του ISP (διαθέσιμη ΑΠΕ μείον το πλεόνασμα που προβλέπεται να περικοπεί· αρνητικό = λιγότερες ΑΠΕ, συχνή αιτία ενεργοποίησης προς τα πάνω). Έλεγχος εκτός εκπαίδευσης:
-σωστή κατεύθυνση 80%, σφάλμα 80 έναντι 105 €/MWh της DAM.</p></div>"""
+σωστή κατεύθυνση 80%, σφάλμα 80 έναντι 105 €/MWh της DAM.<br>
+«ISP Price Up / Down (μέσο)»: οριακές τιμές ενέργειας προς τα πάνω/κάτω του τελευταίου ISP results και ο μέσος όρος τους
+(ωριαίος μέσος των 15λέπτων). «mFRR ENTSO-E Up / Down»: πραγματικές τιμές ενεργοποίησης mFRR της Ελλάδας (Balancing
+Market Results, ENTSO-E), μέσος όρος των 15λέπτων με ενεργοποίηση· «–» = καμία ενεργοποίηση σε αυτή την κατεύθυνση.</p></div>"""

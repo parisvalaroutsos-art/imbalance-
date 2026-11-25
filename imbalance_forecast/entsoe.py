@@ -107,3 +107,67 @@ def controllable(df: pd.DataFrame) -> pd.Series:
     """Ελεγχόμενη παραγωγή (MW): λιγνίτης + αέριο + πετρέλαιο + υδροηλεκτρικά (χωρίς άντληση)."""
     cols = [c for c in ("lignite", "gas", "oil", "hydro_res", "hydro_pumped", "hydro_ror") if c in df]
     return df[cols].fillna(0).sum(axis=1).where(df[cols].notna().any(axis=1))
+
+
+BAL_NS = "urn:iec62325.351:tc57wg16:451-6:balancingdocument:4:1"
+
+
+def parse_a84(xml: bytes) -> pd.DataFrame:
+    """Τιμές ενεργοποίησης εξισορρόπησης (A84). Κρατά mFRR (businessType A97): mfrr_up / mfrr_dn σε €/MWh ανά 15'.
+
+    Λείπουσα θέση = καμία ενεργοποίηση σε αυτή την κατεύθυνση (NaN, όχι συμπλήρωση).
+    """
+    root = ET.fromstring(xml)
+    ns = {"n": root.tag.split("}")[0][1:]}
+    cols: dict[str, list[pd.Series]] = {}
+    for ts in root.findall("n:TimeSeries", ns):
+        bt = ts.find("n:businessType", ns)
+        if bt is not None and bt.text != "A97":
+            continue
+        d = ts.find("n:flowDirection.direction", ns).text
+        name = {"A01": "mfrr_up", "A02": "mfrr_dn"}.get(d)
+        if name is None:
+            continue
+        for per in ts.findall("n:Period", ns):
+            start = pd.Timestamp(per.find("n:timeInterval/n:start", ns).text)
+            step = STEP[per.find("n:resolution", ns).text]
+            vals = {}
+            for p in per.findall("n:Point", ns):
+                a = p.find("n:activation_Price.amount", ns)
+                if a is not None:
+                    vals[start + step * (int(p.find("n:position", ns).text) - 1)] = float(a.text)
+            if vals:
+                cols.setdefault(name, []).append(pd.Series(vals, dtype=float))
+    if not cols:
+        return pd.DataFrame()
+    df = pd.DataFrame({k: pd.concat(v).groupby(level=0).last() for k, v in cols.items()}).sort_index()
+    df.index.name = "timestamp"
+    return df
+
+
+def fetch_mfrr_prices(start, end, out_csv="data/entsoe_mfrr.csv", sleep: float = 1.0) -> pd.DataFrame:
+    """Τιμές ενεργοποίησης mFRR Ελλάδας [start, end) από το ENTSO-E· συγχώνευση με το υπάρχον CSV."""
+    s, e = pd.Timestamp(start, tz="UTC"), pd.Timestamp(end, tz="UTC")
+    parts = []
+    while s < e:
+        t = min(s + pd.Timedelta(days=7), e)
+        xml = _get({"documentType": "A84", "processType": "A16", "controlArea_Domain": GR,
+                    "periodStart": s.strftime("%Y%m%d%H%M"), "periodEnd": t.strftime("%Y%m%d%H%M")})
+        if b"Balancing_MarketDocument" in xml:
+            p = parse_a84(xml)
+            if not p.empty:
+                parts.append(p)
+        s = t
+        time.sleep(sleep)
+    df = pd.concat(parts) if parts else pd.DataFrame(columns=["mfrr_up", "mfrr_dn"])
+    df = df[~df.index.duplicated(keep="last")].sort_index()
+    out = Path(out_csv)
+    if out.exists():
+        old = pd.read_csv(out, index_col=0)
+        old.index = pd.to_datetime(old.index, utc=True)
+        df = df.combine_first(old)
+    df.index.name = "timestamp"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(out)
+    print(f"Αποθηκεύτηκε {out}: {len(df)} 15λεπτα με ενεργοποίηση mFRR")
+    return df
