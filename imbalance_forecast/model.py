@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
+from sklearn.isotonic import IsotonicRegression
 
 from .config import Config
 from .features import P_CURT, STAB_FLAG, STAB_PROB, TARGET
@@ -22,6 +23,7 @@ class ImbalanceModel:
         self.stab_features = stab_features or []
         self.reg = {}
         self.clf = None
+        self.clf_iso = None  # βαθμονόμηση πιθανότητας κατεύθυνσης (isotonic)
         self.clf_up = None
         self.cal_lo = 0.0  # διεύρυνση κάτω άκρου (conformal), στη μονάδα του στόχου
         self.cal_hi = 0.0
@@ -97,6 +99,7 @@ class ImbalanceModel:
         sign = (d["spread"] > 0).astype(int)
         if sign.nunique() == 2:
             self.clf = HistGradientBoostingClassifier(**self.cfg.gbm_params).fit(X[keep], sign[keep])
+            self._calibrate_prob(d, X, sign, keep)
         up = (d["spread"] > self.cfg.spike_up).astype(int)  # ανοδικό «σπάικ» imbalance
         if up.nunique() == 2:
             self.clf_up = HistGradientBoostingClassifier(**self.cfg.gbm_params).fit(X[keep], up[keep])
@@ -124,6 +127,24 @@ class ImbalanceModel:
         self.cal_lo = float(np.quantile(lo_hi[0] - yc, 1 - q_lo))
         self.cal_hi = float(np.quantile(yc - lo_hi[1], q_hi))
 
+    def _calibrate_prob(self, d, X, sign, keep) -> None:
+        """Βαθμονόμηση P(imbalance > DAM): ταξινομητής χωρίς τις τελευταίες prob_cal_days ημέρες, σύγκριση
+        των πιθανοτήτων του με το τι έγινε σε αυτές, και isotonic «χάρτης διόρθωσης» για την τελική πιθανότητα,
+        ώστε «70%» να σημαίνει πράγματι ~7 στις 10."""
+        days = self.cfg.prob_cal_days
+        if not days:
+            return
+        dates = np.sort(d["date"].unique())
+        if len(dates) < days + self.cfg.min_train_days // 2:
+            return
+        cal = d["date"].isin(dates[-days:]).to_numpy()
+        fit_rows = keep & ~cal
+        if sign[fit_rows].nunique() < 2 or sign[cal].nunique() < 2:
+            return
+        m = HistGradientBoostingClassifier(**self.cfg.gbm_params).fit(X[fit_rows], sign[fit_rows])
+        raw = m.predict_proba(X[cal])[:, 1]
+        self.clf_iso = IsotonicRegression(y_min=0.02, y_max=0.98, out_of_bounds="clip").fit(raw, sign[cal])
+
     def predict(self, frame: pd.DataFrame) -> pd.DataFrame:
         frame = frame.copy()
         out = pd.DataFrame(index=frame.index)
@@ -150,6 +171,8 @@ class ImbalanceModel:
                 out[f"imb_{tag}"] = P[:, i]
                 out[f"spread_{tag}"] = P[:, i] - dam
         p = self.clf.predict_proba(X)[:, 1] if self.clf is not None else np.full(len(X), np.nan)
+        if self.clf_iso is not None:
+            p = self.clf_iso.predict(p)
         out["p_imb_gt_dam"] = p
         out["p_imb_lt_dam"] = 1 - p
         out["p_spike_up"] = self.clf_up.predict_proba(X)[:, 1] if self.clf_up is not None else np.nan

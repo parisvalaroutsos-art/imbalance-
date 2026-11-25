@@ -43,6 +43,9 @@ class Config:
     # Χωρίς αυτήν το backtest κάλυπτε 56-60% αντί για 80%.
     calibrate_intervals: bool = True
     cal_days: int = 28
+    # Βαθμονόμηση πιθανότητας κατεύθυνσης P(imbalance > DAM) στις τελευταίες N γνωστές ημέρες (isotonic).
+    # Χωρίς αυτήν, στο backtest «κάτω από DAM 60-80%» συνέβαινε μόνο στο 44-48%. 0 = χωρίς βαθμονόμηση.
+    prob_cal_days: int = 56
 
     # --- Εκπαίδευση / training ---
     train_window_days: int = 365
