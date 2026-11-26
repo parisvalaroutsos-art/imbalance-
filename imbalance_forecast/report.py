@@ -28,10 +28,10 @@ COLS = [
     ("imb_point", "Imbalance (εκτίμηση)", "{:.1f}"),
     ("imb_q10", "q10", "{:.0f}"),
     ("imb_q90", "q90", "{:.0f}"),
-    ("stab_prob", "P(ευστάθεια)", "{:.2f}"),
-    ("p_curt", "P(περικοπή)", "{:.2f}"),
-    ("p_imb_lt_dam", "P(imb<DAM)", "{:.2f}"),
-    ("p_spike_up", "P(imb>DAM+100)", "{:.2f}"),
+    ("p_imb_lt_dam", "Imbalance vs DAM (πιθανότητα)", "{}"),
+    ("stab_prob", "Πιθ. ευστάθειας", "{:.0%}"),
+    ("p_curt", "Πιθ. περικοπής", "{:.0%}"),
+    ("p_spike_up", "Πιθ. σπάικ >DAM+100", "{:.0%}"),
     ("isp_activation", "Ενεργοποίηση ISP (MW)", "{:+.0f}"),
     ("isp_pup", "ISP Price Up", "{:.0f}"),
     ("isp_pdn", "ISP Price Down", "{:.0f}"),
@@ -86,12 +86,20 @@ def to_html(out: pd.DataFrame, cfg: Config, target_date, run_label: str, notes: 
         h["isp_prices"] = [isp_prices(u, d) for u, d in zip(h["isp_pup"], h["isp_pdn"])]
         h = h.drop(columns=["isp_pup", "isp_pdn"])
         names["isp_prices"], fmts["isp_prices"] = "ISP Price Up / Down (μέσο)", "{}"
+    dir_bg = {}
+    if "p_imb_lt_dam" in h.columns:  # βελάκι κατεύθυνσης με την πιθανότητα αυτής της κατεύθυνσης
+        from .nowcast import direction_label
+
+        lab = {i: direction_label(1 - p) if pd.notna(p) else ("", "") for i, p in h["p_imb_lt_dam"].items()}
+        h["p_imb_lt_dam"] = [lab[i][0] for i in h.index]
+        dir_bg = {i: lab[i][1] for i in h.index}
     th = "".join(f"<th style='padding:4px 8px;border-bottom:2px solid #555'>{html.escape(names[c])}</th>"
                  for c in h.columns)
     rows = []
     for idx, r in h.iterrows():
         tds = "".join(
-            f"<td style='padding:3px 8px;text-align:right;{_cell_style(c, r[c])}'>"
+            f"<td style='padding:3px 8px;text-align:{'left' if c == 'p_imb_lt_dam' else 'right'};"
+            f"{_cell_style(c, r[c]) or (f'background:{dir_bg[idx]}' if c == 'p_imb_lt_dam' and dir_bg.get(idx) else '')}'>"
             f"{r[c] if isinstance(r[c], str) else ('' if pd.isna(r[c]) else fmts[c].format(r[c]))}</td>"
             for c in h.columns
         )
@@ -112,6 +120,8 @@ def to_html(out: pd.DataFrame, cfg: Config, target_date, run_label: str, notes: 
 </table>
 <p style="color:#555;margin:8px 0 2px">€/MWh, ωριαίοι μέσοι όροι των 15λέπτων. Μπλε: πιθανή ευστάθεια/περικοπή
 (imbalance προς το κατώτατο όριο). Πορτοκαλί: αυξημένος κίνδυνος ανοδικού σπάικ.
+<br>«Imbalance vs DAM»: ↑ = πιθανότερα πάνω από τη DAM (σύστημα κοντό), ↓ = κάτω (σύστημα μακρύ), με την πιθανότητα
+αυτής της κατεύθυνσης· «αβέβαιο» όταν είναι μεταξύ 40% και 60%. Οι πιθανότητες είναι βαθμονομημένες στις τελευταίες 56 ημέρες.
 {act_note}</p>
 <ul style="color:#555;margin:2px 0">{notes_html}</ul>
 </div>"""
