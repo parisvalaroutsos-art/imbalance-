@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 
-from .nowcast import GBM, TZ, build_frame, direction_label, isp_prices
+from .nowcast import GBM, TZ, build_frame, direction_label, isp_prices, suggestion
 
 H = 12  # ορίζοντες (15λεπτα)
 FEATURES = ["k", "dist", "hour_t", "qh_t", "dam_t", "ida_m_dam_t", "isp_stab_t", "isp_act_t", "isp_ctrl_t",
@@ -166,16 +166,18 @@ def to_html(out: pd.DataFrame, last_s, trained) -> str:
         t = pd.Timestamp(r.t).tz_convert(TZ)
         st, bg = direction_label(r.p_short)
         ida = "" if pd.isna(r.ida_t) else f"{r.ida_t:.1f}"
+        sg, sbg = suggestion(r.p_short, bool(r.imb_q90 > r.dam_t + 100))
         rows.append(f"<tr><td style='padding:3px 8px'>{t:%H:%M}</td>"
                     f"<td style='padding:3px 8px;text-align:right'>{r.dam_t:.1f}</td>"
                     f"<td style='padding:3px 8px;text-align:right'>{ida}</td>"
                     f"<td style='padding:3px 8px;background:{bg}'>{st}</td>"
                     f"<td style='padding:3px 8px;text-align:right;font-weight:bold'>{r.imb_q50:.0f}</td>"
                     f"<td style='padding:3px 8px;text-align:right'>{r.imb_q10:.0f} – {r.imb_q90:.0f}</td>"
-                    f"<td style='padding:3px 8px;text-align:right'>{isp_prices(r.get('pup_t'), r.get('pdn_t'))}</td></tr>")
+                    f"<td style='padding:3px 8px;text-align:right'>{isp_prices(r.get('pup_t'), r.get('pdn_t'))}</td>"
+                    f"<td style='padding:3px 8px;font-weight:bold;background:{sbg}'>{sg}</td></tr>")
     th = "".join(f"<th style='padding:4px 8px;border-bottom:2px solid #555'>{c}</th>" for c in
                  ["15λεπτο CET", "DAM", "Τελευταία IDA", "Imbalance vs DAM (πιθανότητα)", "Imbalance (πρόβλεψη)", "εύρος q10–q90",
-                  "ISP Price Up / Down (μέσο)"])
+                  "ISP Price Up / Down (μέσο)", "Προτεινόμενη ενέργεια (προμηθευτής)"])
     ls = pd.Timestamp(last_s).tz_convert(TZ)
     return f"""<div style="font-family:Arial,sans-serif;font-size:13px">
 <h3 style="margin:0 0 4px">Πρόβλεψη imbalance πραγματικού χρόνου — επόμενες 3 ώρες</h3>
@@ -186,7 +188,9 @@ def to_html(out: pd.DataFrame, last_s, trained) -> str:
 <p style="color:#555;margin:8px 0 2px">Έλεγχος εκτός εκπαίδευσης (5–11/2026, καθυστέρηση ENTSO-E 30'): σωστή κατεύθυνση
 imbalance vs DAM 75% για το επόμενο 15λεπτο, 68% σε 3 ώρες (πρόβλεψη σταδίων ISP2/ISP3: 60%)· σφάλμα 88–95 έναντι 98
 των σταδίων, 102 της IDA και 105 της DAM (€/MWh). «ISP Price Up / Down (μέσο)»: οριακές τιμές ενέργειας του
-τελευταίου δημοσιευμένου ISP results για το 15λεπτο και ο μέσος όρος τους.</p></div>"""
+τελευταίου δημοσιευμένου ISP results για το 15λεπτο και ο μέσος όρος τους. «Προτεινόμενη ενέργεια»: ▲ Συμπλήρωσε
+(↑ ≥ 60%)· ▼ Μείωσε μόνο αν ↓ ≥ 60% και το υψηλό σενάριο q90 δεν ξεπερνά τη DAM + 100 (κίνδυνος σπάικ)· αλλιώς ■ Ουδέτερα
+(αγορά ακριβώς της πρόβλεψης φορτίου). Διόρθωση θέσης στο XBID, έως 5–10% του φορτίου.</p></div>"""
 
 
 def evaluate(cut="2026-05-01", lag_min=30, since="2025-07-01", use_mfrr=False, halflife_days=None, m=None):

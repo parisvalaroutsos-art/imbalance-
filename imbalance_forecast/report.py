@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 
+import numpy as np
 import pandas as pd
 
 from .config import Config
@@ -86,24 +87,33 @@ def to_html(out: pd.DataFrame, cfg: Config, target_date, run_label: str, notes: 
         h["isp_prices"] = [isp_prices(u, d) for u, d in zip(h["isp_pup"], h["isp_pdn"])]
         h = h.drop(columns=["isp_pup", "isp_pdn"])
         names["isp_prices"], fmts["isp_prices"] = "ISP Price Up / Down (μέσο)", "{}"
-    dir_bg = {}
+    bg = {}  # (στήλη, ώρα) -> χρώμα φόντου για τις στήλες κειμένου
     if "p_imb_lt_dam" in h.columns:  # βελάκι κατεύθυνσης με την πιθανότητα αυτής της κατεύθυνσης
-        from .nowcast import direction_label
+        from .nowcast import direction_label, suggestion
 
-        lab = {i: direction_label(1 - p) if pd.notna(p) else ("", "") for i, p in h["p_imb_lt_dam"].items()}
+        p_up = 1 - h["p_imb_lt_dam"]
+        spk = h["p_spike_up"] if "p_spike_up" in h.columns else pd.Series(np.nan, index=h.index)
+        lab = {i: direction_label(p) if pd.notna(p) else ("", "") for i, p in p_up.items()}
+        sug = {i: suggestion(p, None if pd.isna(spk[i]) else bool(spk[i] >= 0.05)) for i, p in p_up.items()}
         h["p_imb_lt_dam"] = [lab[i][0] for i in h.index]
-        dir_bg = {i: lab[i][1] for i in h.index}
+        h["suggest"] = [sug[i][0] for i in h.index]
+        bg.update({("p_imb_lt_dam", i): lab[i][1] for i in h.index})
+        bg.update({("suggest", i): sug[i][1] for i in h.index})
+        names["suggest"], fmts["suggest"] = "Προτεινόμενη ενέργεια (προμηθευτής)", "{}"
+    text_cols = ("p_imb_lt_dam", "suggest")
     th = "".join(f"<th style='padding:4px 8px;border-bottom:2px solid #555'>{html.escape(names[c])}</th>"
                  for c in h.columns)
-    rows = []
-    for idx, r in h.iterrows():
-        tds = "".join(
-            f"<td style='padding:3px 8px;text-align:{'left' if c == 'p_imb_lt_dam' else 'right'};"
-            f"{_cell_style(c, r[c]) or (f'background:{dir_bg[idx]}' if c == 'p_imb_lt_dam' and dir_bg.get(idx) else '')}'>"
-            f"{r[c] if isinstance(r[c], str) else ('' if pd.isna(r[c]) else fmts[c].format(r[c]))}</td>"
-            for c in h.columns
-        )
-        rows.append(f"<tr><td style='padding:3px 8px'>{idx}</td>{tds}</tr>")
+
+    def td(c, idx, v):
+        style = _cell_style(c, v)
+        if not style and bg.get((c, idx)):
+            style = f"background:{bg[(c, idx)]}" + (";font-weight:bold" if c == "suggest" else "")
+        align = "left" if c in text_cols else "right"
+        txt = v if isinstance(v, str) else ("" if pd.isna(v) else fmts[c].format(v))
+        return f"<td style='padding:3px 8px;text-align:{align};{style}'>{txt}</td>"
+
+    rows = [f"<tr><td style='padding:3px 8px'>{idx}</td>{''.join(td(c, idx, r[c]) for c in h.columns)}</tr>"
+            for idx, r in h.iterrows()]
     d = pd.Timestamp(target_date)
     info = (f"Issue: {out.attrs.get('issue_date')} | imbalance γνωστό έως {out.attrs.get('imbalance_known_through')}"
             f" | IDA: {', '.join(cfg.ida_available) or 'καμία'}")
@@ -122,6 +132,9 @@ def to_html(out: pd.DataFrame, cfg: Config, target_date, run_label: str, notes: 
 (imbalance προς το κατώτατο όριο). Πορτοκαλί: αυξημένος κίνδυνος ανοδικού σπάικ.
 <br>«Imbalance vs DAM»: ↑ = πιθανότερα πάνω από τη DAM (σύστημα κοντό), ↓ = κάτω (σύστημα μακρύ), με την πιθανότητα
 αυτής της κατεύθυνσης· «αβέβαιο» όταν είναι μεταξύ 40% και 60%. Οι πιθανότητες είναι βαθμονομημένες στις τελευταίες 56 ημέρες.
+<br>«Προτεινόμενη ενέργεια (προμηθευτής)»: ▲ Συμπλήρωσε = αγορά λίγο παραπάνω από την πρόβλεψη φορτίου (↑ ≥ 60%)·
+▼ Μείωσε = λίγο λιγότερο (↓ ≥ 60% και κίνδυνος σπάικ &lt; 5%)· ■ Ουδέτερα = αγορά ακριβώς της πρόβλεψης φορτίου.
+Κανόνας από το backtest 2026 (IDA2 μετά το ISP1: +251 χιλ. € ανά 1 MWh/15', χειρότερος μήνας −7 χιλ. €)· μέγεθος διόρθωσης έως 5–10% του φορτίου.
 {act_note}</p>
 <ul style="color:#555;margin:2px 0">{notes_html}</ul>
 </div>"""

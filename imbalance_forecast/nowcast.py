@@ -145,6 +145,22 @@ def direction_label(p: float) -> tuple[str, str]:
     return f"αβέβαιο (πάνω {p:.0%} / κάτω {1 - p:.0%})", ""
 
 
+def suggestion(p_up: float, spike_risk: bool | None) -> tuple[str, str]:
+    """Προτεινόμενη ενέργεια προμηθευτή (backtest 2026: συμπλήρωση όταν ↑ ≥ 60%, μείωση μόνο όταν ↓ ≥ 60% χωρίς κίνδυνο σπάικ).
+
+    p_up = P(imbalance > DAM)· spike_risk = True αν ο κίνδυνος σπάικ δεν είναι χαμηλός (None = άγνωστος → δεν μειώνουμε).
+    """
+    if pd.isna(p_up):
+        return "", ""
+    if p_up >= 0.6:
+        return "▲ Συμπλήρωσε (long)", "#ffe1d6"
+    if p_up <= 0.4:
+        if spike_risk is False:
+            return "▼ Μείωσε (short)", "#dbe9ff"
+        return "■ Ουδέτερα (κίνδυνος σπάικ)", "#f2f2f2"
+    return "■ Ουδέτερα", ""
+
+
 def _status(p: float) -> tuple[str, str]:
     if p >= 0.8:
         return "κοντό (ενεργ. ↑)", "#ffe1d6"
