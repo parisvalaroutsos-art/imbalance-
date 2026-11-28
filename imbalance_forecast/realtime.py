@@ -161,6 +161,10 @@ def forecast_now(lag_min: int = 30, since="2025-07-01") -> tuple[pd.DataFrame, p
 
 
 def to_html(out: pd.DataFrame, last_s, trained) -> str:
+    from .model import align_to_direction  # εκτίμηση συνεπής με την κατεύθυνση (βελάκι)
+
+    out = out.copy()
+    out["imb_q50"] = align_to_direction(out["imb_q50"].values, out["dam_t"].values, out["p_short"].values)
     rows = []
     for _, r in out.iterrows():
         t = pd.Timestamp(r.t).tz_convert(TZ)

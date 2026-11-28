@@ -172,7 +172,14 @@ def test_stage_isp2_isp3(data):
     res = backtest(d, c3, "2025-10-01", "2025-10-20", verbose=False)
     assert len(res) and (res.index.tz_convert(cfg.tz).hour >= 12).all()
     assert res["p_spike_up"].between(0, 1).all()
-    assert np.allclose(res["imb_point"], res["imb_q50"])  # ίδια ημέρα: σημειακή = διάμεσος
+    # ίδια ημέρα: σημειακή = διάμεσος, εκτός αν αντιφάσκει με την κατεύθυνση (τότε = DAM)
+    from imbalance_forecast.model import align_to_direction
+
+    exp = align_to_direction(res["imb_q50"].values, res["dam"].values, res["p_imb_gt_dam"].values)
+    assert np.allclose(res["imb_point"], exp)
+    up, dn = res["p_imb_gt_dam"] >= 0.6, res["p_imb_gt_dam"] <= 0.4
+    assert (res.loc[up, "imb_point"] >= res.loc[up, "dam"] - 1e-9).all()
+    assert (res.loc[dn, "imb_point"] <= res.loc[dn, "dam"] + 1e-9).all()
 
 
 def test_isp_activation_by_stage(data):

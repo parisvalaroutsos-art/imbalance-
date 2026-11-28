@@ -124,6 +124,9 @@ class Nowcaster:
         P[:, 2] = np.maximum(P[:, 2] + self.cal_hi, P[:, 1])
         for i, q in enumerate(("q10", "q50", "q90")):
             out[f"imb_{q}"] = k["dam"].values + P[:, i]
+        from .model import align_to_direction  # εκτίμηση συνεπής με την κατεύθυνση
+
+        out["imb_q50"] = align_to_direction(out["imb_q50"].values, k["dam"].values, out["p_short"].values)
         out["imbalance_actual"] = k["imbalance"]  # αν έχει ήδη δημοσιευθεί
         return out
 

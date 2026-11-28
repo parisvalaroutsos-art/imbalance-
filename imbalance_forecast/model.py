@@ -16,6 +16,21 @@ from .config import Config
 from .features import P_CURT, STAB_FLAG, STAB_PROB, TARGET
 
 
+def align_to_direction(point, dam, p_up, thr: float = 0.6):
+    """Συνέπεια εκτίμησης και κατεύθυνσης: αν η πιθανότητα δίνει ↑ (≥ thr) αλλά η εκτίμηση βγαίνει κάτω από τη DAM,
+    ή ↓ (≤ 1 - thr) αλλά βγαίνει πάνω, η εκτίμηση γίνεται ίση με τη DAM.
+    Backtest 2026 (στάδια ISP2/ISP1/DAM): σφάλμα 86,9 → 86,1, 88,9 → 87,9, 94,3 → 93,2 €/MWh· στις ασυνεπείς
+    περιπτώσεις η κατεύθυνση ήταν σωστή στο 66–67%."""
+    point = np.asarray(point, dtype=float).copy()
+    dam = np.asarray(dam, dtype=float)
+    p_up = np.asarray(p_up, dtype=float)
+    up = (p_up >= thr) & (point < dam)
+    dn = (p_up <= 1 - thr) & (point > dam)
+    fix = (up | dn) & np.isfinite(dam)
+    point[fix] = dam[fix]
+    return point
+
+
 class ImbalanceModel:
     def __init__(self, cfg: Config, features: list[str], stab_features: list[str] | None = None):
         self.cfg = cfg
@@ -183,6 +198,7 @@ class ImbalanceModel:
         if self.cfg.point_mode == "q50":
             # isp2/isp3: η διάμεσος του μοντέλου κερδίζει DAM και IDA στο backtest
             point = out["imb_q50"].copy()
+            point[:] = align_to_direction(point.values, dam, p)
         elif P_CURT in out and "imb_min28" in frame:
             hit = (out[P_CURT] >= self.cfg.point_curt_threshold) & frame["imb_min28"].notna()
             point[hit] = np.minimum(frame.loc[hit, "imb_min28"], point[hit])
